@@ -1,7 +1,8 @@
 import React, {useState, useEffect} from 'react'
 import axios from 'axios'
 import Admin from './Admin'
-import { motion, AnimatePresence } from 'framer-motion'
+import User from './User'
+import DataTable from 'react-data-table-component'
 // lightweight theme toggler (avoids use-dark-mode peer dependency issues)
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
@@ -18,7 +19,6 @@ function AuthCallbackView(){
         const code = params.get('code');
         const err = params.get('error');
         if (err) {
-          setError(err);
           setStatus('Authorization failed');
           return;
         }
@@ -66,7 +66,8 @@ function AuthCallbackView(){
   );
 }
 
-function Leaderboard({ items, onRowClick, query }) {
+function Leaderboard({ items, onRowClick, query, rowsPerPage = 5 }) {
+  const [isSearching, setIsSearching] = React.useState(false)
   const q = (query || '').toLowerCase();
   const filtered = items.filter(it => {
     if (!q) return true;
@@ -75,9 +76,17 @@ function Leaderboard({ items, onRowClick, query }) {
     return String(name).toLowerCase().includes(q) || String(nick).toLowerCase().includes(q);
   });
 
+  React.useEffect(()=>{
+    if (!query) return setIsSearching(false)
+    setIsSearching(true)
+    const t = setTimeout(()=> setIsSearching(false), 280)
+    return ()=> clearTimeout(t)
+    // Keep table layout stable even when no items: DataTable's noDataComponent handles empty state
+  }, [query])
+
   const columns = [
-    { name: '#', selector: (row, idx) => idx + 1, width: '64px' },
-    { name: 'Athlete', selector: row => formatName(row.athlete), sortable: true, grow: 2 },
+    { name: '#', selector: row => row._index, width: '64px' },
+    { name: 'Name', selector: row => formatName(row.athlete), sortable: true, wrap: true, grow: 2 },
     { name: 'Distance', selector: row => ((row.distance||0)/1000).toFixed(1) + ' km', sortable: true, right: true },
     { name: 'Runs', selector: row => row.count || 0, sortable: true, right: true },
     { name: 'Longest', selector: row => ((row.longest||0)/1000).toFixed(1) + ' km', right: true },
@@ -85,42 +94,24 @@ function Leaderboard({ items, onRowClick, query }) {
     { name: 'Elev. Gain', selector: row => (row.elev_gain || 0) + ' m', right: true }
   ]
 
+  const data = filtered.map((r, i)=> ({...r, _index: i+1}))
+
   return (
-    <div className="leaderboard compact">
-      <table className="simple-table" role="table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Athlete</th>
-            <th>Distance</th>
-            <th>Runs</th>
-            <th>Longest</th>
-            <th>Avg. Pace</th>
-            <th>Elev. Gain</th>
-          </tr>
-        </thead>
-        <tbody>
-            <AnimatePresence>
-            {filtered.length === 0 ? (
-              <motion.tr initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}>
-                <td colSpan={7} style={{padding:20,textAlign:'center',color:'var(--muted)'}}>No matching records</td>
-              </motion.tr>
-            ) : (
-              filtered.map((row, idx) => (
-                <motion.tr key={row.id || idx} initial={{opacity:0, y:6}} animate={{opacity:1, y:0}} exit={{opacity:0, y:-6}} onClick={() => onRowClick && onRowClick(row)} style={{cursor:'pointer'}}>
-                  <td>{idx + 1}</td>
-                  <td>{formatName(row.athlete)}</td>
-                  <td className="col-right">{((row.distance||0)/1000).toFixed(1) + ' km'}</td>
-                  <td className="col-center">{row.count || 0}</td>
-                  <td className="col-right">{((row.longest||0)/1000).toFixed(1) + ' km'}</td>
-                  <td className="col-right">{(formatPace(row.avg_pace) || '-')}</td>
-                  <td className="col-right">{(row.elev_gain || 0) + ' m'}</td>
-                </motion.tr>
-              ))
-            )}
-          </AnimatePresence>
-        </tbody>
-      </table>
+    <div className={`leaderboard compact data-table-anim ${isSearching ? 'data-table-searching' : ''}`}>
+      <DataTable
+        columns={columns}
+        data={data}
+        highlightOnHover
+        pointerOnHover
+        noHeader
+        responsive
+        pagination
+        paginationPerPage={rowsPerPage}
+        paginationRowsPerPageOptions={[5,10,15,20,50]}
+        onRowClicked={onRowClick}
+        noDataComponent={<div className="no-results-row">No matching records</div>}
+        customStyles={{table: {style:{width:'100%'}}}}
+      />
     </div>
   )
 }
@@ -148,6 +139,7 @@ export default function App(){
   const [items, setItems] = useState([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
+  const [rowsPerPage, setRowsPerPage] = useState(15)
 
   useEffect(()=>{ fetchData() }, [])
 
@@ -181,7 +173,7 @@ export default function App(){
 
   function openUser(it){
     const id = encodeURIComponent(it.id);
-    window.location.href = `/user.html?id=${id}`;
+    window.location.href = `/user/${id}`;
   }
 
   // Simple path-based routing: render Admin when path is /admin or /admin.html
@@ -193,10 +185,13 @@ export default function App(){
   if (path === '/admin' || path === '/admin.html') {
     return <Admin />
   }
+  // match /user or /user/{id}
+  if (path === '/user' || path === '/user.html' || path.startsWith('/user/')) {
+    return <User />
+  }
 
   return (
     <div className="app admin-card">
-      <a className="admin-fab" href="/admin">Admin</a>
       <header className="admin-header" style={{padding:12}}>
         <div className="header-actions">
           {/* search moved to table top-right */}
@@ -205,16 +200,14 @@ export default function App(){
 
       <main style={{padding:12}}>
           <div className="table-top" style={{marginTop:12}}>
-            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}>
-              <input placeholder="Search members" value={query} onChange={e=>setQuery(e.target.value)} className="search-small" />
+            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8,gap:8}}>
+              <label style={{display:'flex',alignItems:'center',gap:8}}>
+                <input placeholder="Search members" value={query} onChange={e=>setQuery(e.target.value)} className="search-small" />
+              </label>
             </div>
-            <Leaderboard items={items} onRowClick={openUser} query={query} />
+            <Leaderboard items={items} onRowClick={openUser} query={query} rowsPerPage={rowsPerPage} />
           </div>
-        {items.length===0 && (
-          <div className="empty-table">
-            <div className="empty-cell">No records found — try running the weekly aggregation or adjust the date range.</div>
-          </div>
-        )}
+        {/* DataTable will render a noDataComponent when there are no items; avoid rendering an extra empty block that collapses layout */}
       </main>
       {loading && (
         <div className="page-loader">

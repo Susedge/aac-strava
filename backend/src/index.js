@@ -184,6 +184,24 @@ async function persistAdminToken({ access_token, refresh_token, athlete_id, expi
 // Simple health
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
+// Redirect legacy static user page requests to the SPA index so React handles the route
+app.get(['/user', '/user.html'], (req, res) => {
+  // If query contains id, map to /user/{id} and preserve other params
+  try {
+    const raw = req.url || '';
+    const qs = raw.includes('?') ? raw.slice(raw.indexOf('?')) : '';
+    const params = new URLSearchParams(qs);
+    const id = params.get('id') || params.get('athlete_id');
+    if (id) {
+      params.delete('id'); params.delete('athlete_id');
+      const rest = params.toString();
+      return res.redirect('/user/' + encodeURIComponent(id) + (rest ? ('?' + rest) : ''));
+    }
+  } catch (e) { /* ignore parsing errors */ }
+  // default redirect to /user
+  return res.redirect('/user');
+});
+
 // Return admin/strava doc for debugging
 app.get('/admin/strava', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
@@ -842,8 +860,5 @@ app.get('/debug/activities-docs', async (req, res) => {
     res.status(500).json({ error: 'failed' });
   }
 });
-
-// Test endpoints for UI
-// ...test endpoints removed
 
 app.listen(PORT, () => console.log(`Server running on ${PORT}`));

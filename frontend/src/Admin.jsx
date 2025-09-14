@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import DataTable from 'react-data-table-component'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
 
@@ -8,6 +8,8 @@ export default function Admin(){
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [authed, setAuthed] = useState(false)
+  // default to 15 rows per page for consistency with main leaderboard
+  const [rowsPerPage, setRowsPerPage] = useState(15)
   const [passInput, setPassInput] = useState('')
   const [editing, setEditing] = useState({})
   const [status, setStatus] = useState({})
@@ -134,35 +136,64 @@ export default function Admin(){
     setSavingAll(false)
   }
 
+  // Build DataTable columns including editable nickname and status
+  const dtColumns = [
+    { name: '#', selector: (row) => row._index, width: '64px' },
+    { name: 'Name', selector: row => row.name, sortable: true, grow: 2, minWidth: '220px' },
+    { name: 'Nickname', cell: row => (
+        <input className="admin-input" value={editing[row.id] ?? ''} onChange={e=>handleEdit(row.id, e.target.value)} />
+      ), minWidth: '200px', grow: 1
+    },
+    { name: '', cell: row => (
+        <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:8}}>
+          {status[row.id] === 'success' && <span className="save-status save-success">Saved</span>}
+          {status[row.id] === 'error' && <span className="save-status save-error">Failed</span>}
+        </div>
+      ), width: '140px'
+    }
+  ]
+
+  // short search animation state (mirrors Leaderboard behavior)
+  const [isSearching, setIsSearching] = useState(false)
+  useEffect(()=>{
+    if (!search) return setIsSearching(false)
+    setIsSearching(true)
+    const t = setTimeout(()=> setIsSearching(false), 280)
+    return ()=> clearTimeout(t)
+  },[search])
+
+  // apply search filtering so DataTable only shows matching rows (keeps previous behavior)
+  const filtered = rows.filter(r => {
+    if (!search) return true
+    const s = search.toLowerCase()
+    return (r.name||'').toLowerCase().includes(s) || (r.nickname||'').toLowerCase().includes(s) || (editing[r.id] || '').toLowerCase().includes(s)
+  })
+  const data = filtered.map((r,i)=> ({...r,_index:i+1}))
+
   return (
     <div className="admin-page admin-card">
-      <AnimatePresence>
       {!authed && (
-        <motion.div className="admin-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.18}}>
-          <motion.div className="admin-lock" initial={{opacity:0,y:-8,scale:0.995}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-8}} transition={{duration:0.22}}>
+        <div className="admin-overlay">
+          <div className="admin-lock">
             <h2>AAC Admin</h2>
             <form onSubmit={handleAuthSubmit} className="lock-form">
               <label>Enter password to continue</label>
               <input id="adminPwd" autoFocus type="password" value={passInput} onChange={e=>setPassInput(e.target.value)} className="admin-input" />
               <div className="hint" style={{marginTop:6}}>This is a client-side gate for local admin use.</div>
               <div style={{display:'flex',gap:8,marginTop:12,justifyContent:'flex-start',alignItems:'center'}}>
-                <motion.button whileHover={{scale:1.04}} whileTap={{scale:0.98}} className="btn unlock-btn" type="submit">Unlock</motion.button>
+                <button className="btn unlock-btn" type="submit">Unlock</button>
                 <a className="btn-ghost" href="/" style={{marginLeft:8}}>Back to site</a>
               </div>
             </form>
-          </motion.div>
-        </motion.div>
+          </div>
+        </div>
       )}
-      </AnimatePresence>
 
       {authed && (
         <>
           <header className="admin-header">
             <h2 style={{margin:0}}>AAC Admin — Members</h2>
             <div className="header-actions">
-              <div style={{marginRight:16}}>
-                <input placeholder="Search members" value={search} onChange={e=>setSearch(e.target.value)} className="search-small" />
-              </div>
               <a className="btn btn-ghost" href="/">Back to main</a>
               <a className="btn btn-ghost" href="/connect.html" target="_blank" rel="noopener noreferrer" style={{marginLeft:8}}>Connect</a>
               <button className="btn btn-ghost" onClick={load} style={{marginLeft:8}}>Reload</button>
@@ -174,54 +205,19 @@ export default function Admin(){
             {!loading && rows.length===0 && <div className="empty">No athletes found</div>}
 
             {!loading && (
-              <div className="admin-table-wrap">
-                <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}>
+              <div className="admin-table-wrap compact">
+                <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8,gap:8}}>
                   <input placeholder="Search members" value={search} onChange={e=>setSearch(e.target.value)} className="search-small" />
                 </div>
-                <table className="simple-table admin-table" style={{width:'100%'}}>
-                  <thead>
-                    <tr>
-                      <th style={{width:56}}>#</th>
-                      <th>Name</th>
-                      <th>Nickname</th>
-                      <th style={{width:140}}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <AnimatePresence>
-                    {(() => {
-                      const filtered = rows.filter(r => {
-                        if (!search) return true
-                        const s = search.toLowerCase()
-                        return (r.name||'').toLowerCase().includes(s) || (r.nickname||'').toLowerCase().includes(s)
-                      })
-                      if (filtered.length === 0) {
-                        return (
-                          <motion.tr initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}>
-                            <td colSpan={4} style={{padding:20,textAlign:'center',color:'var(--muted)'}}>No matching members</td>
-                          </motion.tr>
-                        )
-                      }
-                      return filtered.map((r, idx) => (
-                        <motion.tr key={r.id || idx} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-6}} className={idx % 2 === 0 ? 'table-row-even table-row-hover' : 'table-row-odd table-row-hover'}>
-                          <td>{idx+1}</td>
-                          <td style={{whiteSpace:'nowrap'}}>{r.name}</td>
-                          <td>
-                            <input className="admin-input" value={editing[r.id] ?? ''} onChange={e=>handleEdit(r.id, e.target.value)} />
-                            {dirty[r.id] && <span className="unsaved-dot" title="Unsaved changes"></span>}
-                          </td>
-                          <td style={{textAlign:'right'}}>
-                            <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:8}}>
-                              {status[r.id] === 'success' && <span className="save-status save-success">Saved</span>}
-                              {status[r.id] === 'error' && <span className="save-status save-error">Failed</span>}
-                            </div>
-                          </td>
-                        </motion.tr>
-                      ))
-                    })()}
-                    </AnimatePresence>
-                  </tbody>
-                </table>
+                <DataTable
+                  columns={dtColumns}
+                  data={data}
+                  noHeader
+                  pagination
+                  paginationPerPage={rowsPerPage}
+                  paginationRowsPerPageOptions={[5,10,15,20,50]}
+                  noDataComponent={<div className="no-results-row">No matching members</div>}
+                />
               </div>
             )}
           </main>

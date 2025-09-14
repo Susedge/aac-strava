@@ -52,17 +52,33 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 .empty-table{display:flex;justify-content:center;align-items:center;padding:24px;border-radius:10px;background:transparent;margin-top:6px}
 .empty-table .empty-cell{color:var(--muted);font-size:14px;padding:8px 12px}
 
-/* Admin page styles */
-.admin-page{width:900px;max-width:100%;padding:18px 8px;border-radius:0;position:relative;z-index:1}
-.admin-card{background:var(--card);color:var(--text);border:none;box-shadow:0 8px 30px rgba(2,6,23,0.06);overflow:visible;border-radius:10px;padding:20px;max-width:980px;width:100%}
+.admin-page{width:100%;max-width:100%;padding:18px;box-sizing:border-box;border-radius:0;position:relative;z-index:1}
+.admin-card{background:var(--card);color:var(--text);border:none;box-shadow:0 8px 30px rgba(2,6,23,0.06);overflow:visible;border-radius:10px;padding:20px;max-width:none;width:100%}
 .admin-table{width:100%;border-collapse:collapse;margin-top:8px;background:transparent}
-.admin-table th{text-align:left;padding:8px 14px;color:var(--muted);font-size:13px;font-weight:700;background:rgba(255,255,255,0.02)}
-.admin-table td{padding:10px 14px;vertical-align:middle}
+.admin-table th{text-align:left;padding:12px 18px;color:var(--muted);font-size:13px;font-weight:700;background:rgba(255,255,255,0.02)}
+.admin-table td{padding:14px 18px;vertical-align:middle}
+
+/* Admin table fixed layout so header keeps width when no rows */
+.admin-table{table-layout:fixed}
+.admin-table th:nth-child(1), .admin-table td:nth-child(1){width:64px}
+.admin-table th:nth-child(2), .admin-table td:nth-child(2){width:360px}
+.admin-table th:nth-child(3), .admin-table td:nth-child(3){width:220px}
+.admin-table th:nth-child(4), .admin-table td:nth-child(4){width:160px}
 .admin-table input{padding:6px 8px;border-radius:6px;border:1px solid rgba(11,18,32,0.06);background:transparent;color:inherit}
 
 /* Ensure simple-table cells use same padding so headers align */
 .simple-table{width:100%;border-collapse:collapse;table-layout:auto}
-.simple-table th,.simple-table td{padding:10px 14px}
+.simple-table th,.simple-table td{padding:14px 20px}
+
+/* Prevent table header shrink: give stable column width hints */
+.simple-table{table-layout:fixed}
+.simple-table th:nth-child(1), .simple-table td:nth-child(1){width:64px}
+.simple-table th:nth-child(2), .simple-table td:nth-child(2){width:320px}
+.simple-table th:nth-child(3), .simple-table td:nth-child(3){width:160px}
+.simple-table th:nth-child(4), .simple-table td:nth-child(4){width:96px}
+.simple-table th:nth-child(5), .simple-table td:nth-child(5){width:160px}
+.simple-table th:nth-child(6), .simple-table td:nth-child(6){width:160px}
+.simple-table th:nth-child(7), .simple-table td:nth-child(7){width:160px}
 
 /* Strava-like header + striped rows */
 /* Simplify table visuals: remove borders, stripes and hover backgrounds to render plain tables */
@@ -71,11 +87,11 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 .table-row-even{background:rgba(255,255,255,0.01)}
 .table-row-hover:hover{background:rgba(255,255,255,0.03)}
 
-.simple-table thead th, .admin-table thead th{background:var(--table-header-bg, #f3f4f6);font-weight:700;color:var(--text);border-bottom:1px solid rgba(16,24,40,0.06);text-align:left}
+.simple-table thead th, .admin-table thead th{background:#f3f4f6;font-weight:700;color:var(--text);border-bottom:1px solid rgba(16,24,40,0.06);text-align:left}
 .simple-table tbody tr{background:transparent}
 .simple-table tbody tr:nth-child(odd){background:transparent}
-.simple-table tbody tr:nth-child(even){background:rgba(16,24,40,0.02)}
-.admin-table tbody tr:nth-child(even){background:rgba(16,24,40,0.02)}
+.simple-table tbody tr:nth-child(even){background:#fafbfd}
+.admin-table tbody tr:nth-child(even){background:#fafbfd}
 .simple-table tbody tr{border-bottom:none}
 .simple-table tbody tr:hover, .admin-table tbody tr:hover{background:rgba(37,99,235,0.04)}
 
@@ -100,10 +116,10 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 /* Improved search box */
 .search-small{padding:8px 12px;border-radius:10px;border:1px solid rgba(16,24,40,0.08);width:220px;background:#fff;color:var(--text);box-shadow:0 2px 6px rgba(16,24,40,0.04)}
 
-/* Page loader overlay */
-.page-loader{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;background:rgba(2,6,11,0.6);z-index:9999}
-.loader-box{background:rgba(8,12,16,0.85);padding:18px 22px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6);display:flex;align-items:center;gap:12px;color:var(--text)}
-.spinner{width:20px;height:20px;border-radius:50%;border:3px solid rgba(255,255,255,0.06);border-top-color:var(--text);animation:spin 1s linear infinite}
+/* Page loader overlay (light-themed) */
+.page-loader{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.85);z-index:9999}
+.loader-box{background:#ffffff;padding:16px 20px;border-radius:10px;box-shadow:0 10px 30px rgba(11,18,32,0.06);display:flex;align-items:center;gap:12px;color:var(--text);border:1px solid rgba(11,18,32,0.04)}
+.spinner{width:20px;height:20px;border-radius:50%;border:3px solid rgba(11,18,32,0.08);border-top-color:var(--accent);animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* Unsaved marker for rows */
@@ -115,32 +131,33 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 .processing{padding:0;background:rgba(255,255,255,0.02);border-radius:8px}
 
 /* Admin-specific input and button styles */
-.admin-input{width:100%;padding:0;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+.admin-input{width:100%;padding:0;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
 .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.03);color:var(--text);padding:0}
 .btn-small{padding:0;font-size:13px}
 
-/* Lock / modal like area for password */
-.admin-lock{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0;border-radius:10px;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);border:1px solid rgba(255,255,255,0.02)}
+/* Lock / modal like area for password (light-themed) */
+.admin-lock{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0;border-radius:10px;background:linear-gradient(180deg,#ffffff,#fbfbfc);border:1px solid rgba(11,18,32,0.06);color:var(--text)}
 .admin-lock h2{margin:0 0 12px 0}
 .lock-form{width:320px;max-width:100%;display:flex;flex-direction:column;gap:8px}
 .lock-form label{color:var(--muted);font-size:13px}
 
-/* Fullscreen modal overlay for admin unlock */
-.admin-overlay{position:fixed;top:0;left:0;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:rgba(2,6,11,0.7);z-index:9999}
-.admin-overlay .admin-lock{width:420px;max-width:92%;padding:22px;background:linear-gradient(180deg, rgba(12,16,20,0.98), rgba(10,12,16,0.95));box-shadow:0 20px 60px rgba(2,6,11,0.75);border-radius:14px;transform:translateY(0);animation:adminPop .22s ease both}
+
+/* Fullscreen modal overlay for admin unlock (light-themed) */
+.admin-overlay{position:fixed;top:0;left:0;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.85);z-index:9999}
+.admin-overlay .admin-lock{width:420px;max-width:92%;padding:20px;background:linear-gradient(180deg,#ffffff,#fbfbfc);box-shadow:0 20px 60px rgba(11,18,32,0.06);border-radius:14px;transform:translateY(0);animation:adminPop .22s ease both}
 .admin-overlay .lock-form{width:100%}
-.admin-overlay .lock-form input[type="password"]{width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.03);color:var(--text);font-size:15px;outline:none;box-shadow:inset 0 1px 0 rgba(255,255,255,0.02)}
+.admin-overlay .lock-form input[type="password"]{width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(11,18,32,0.06);background:#fff;color:var(--text);font-size:15px;outline:none;box-shadow:inset 0 1px 0 rgba(11,18,32,0.02)}
 .admin-overlay .actions{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
 .admin-overlay .actions .btn{padding:8px 12px;border-radius:8px}
 .admin-overlay .actions .back-link{color:var(--text);text-decoration:none;padding-left:8px}
 .admin-overlay .hint{color:var(--muted);font-size:13px;margin-top:6px}
 
 /* Tidy up Unlock button specifically when inside the admin overlay */
-.admin-overlay .btn{padding:10px 16px;border-radius:10px;background:linear-gradient(90deg,#ff5a3c,#ff7b5a);color:#fff;border:none;font-weight:700;box-shadow:0 10px 30px rgba(13,26,33,0.6),0 6px 18px rgba(255,90,60,0.12);font-size:14px}
+.admin-overlay .btn{padding:10px 16px;border-radius:10px;background:linear-gradient(90deg,#ff5a3c,#ff7b5a);color:#fff;border:none;font-weight:700;box-shadow:0 10px 30px rgba(11,18,32,0.06),0 6px 18px rgba(255,90,60,0.08);font-size:14px}
 .admin-overlay .btn:hover{filter:brightness(0.98)}
 .admin-overlay .btn:active{transform:translateY(1px)}
-.admin-overlay a.btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--text);padding:8px 12px;border-radius:8px;text-decoration:none}
-.admin-overlay .btn:focus{outline:none;box-shadow:0 10px 30px rgba(13,26,33,0.6),0 10px 30px rgba(255,90,60,0.12)}
+.admin-overlay a.btn-ghost{background:transparent;border:1px solid rgba(11,18,32,0.06);color:var(--text);padding:8px 12px;border-radius:8px;text-decoration:none}
+.admin-overlay .btn:focus{outline:none;box-shadow:0 10px 30px rgba(11,18,32,0.06)}
 
 @keyframes adminPop{from{opacity:0;transform:translateY(-8px) scale(.995)}to{opacity:1;transform:translateY(0) scale(1)}}
 
@@ -149,10 +166,17 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 .header-actions{display:flex;align-items:center;gap:8px}
 
 /* Smaller search box sitting top-right */
-.search-small{padding:6px 8px;border-radius:8px;border:1px solid rgba(11,18,32,0.06);width:180px}
+.search-small{padding:6px 8px;border-radius:8px;border:1px solid rgba(11,18,32,0.06);width:180px;max-width:40vw}
+.rows-per-select{padding:6px 8px;border-radius:8px;border:1px solid rgba(11,18,32,0.06);background:transparent;color:var(--text);height:36px}
 
 /* Add margin above table */
 .table-top{margin-top:16px}
+
+/* Reserve vertical space for tables so header doesn't shift when tbody is empty */
+.admin-table-wrap, .table-top{min-height:440px}
+
+/* Compact no-results row styling */
+.no-results-row{padding:18px 16px;text-align:center;color:var(--muted);font-size:15px}
 
 /* small improvements for table/no-data */
 .loading,.empty{padding:0;border-radius:8px;background:rgba(255,255,255,0.01);color:var(--muted)}
@@ -169,10 +193,10 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 	background:transparent;
 }
 .rdt_TableHead{
-	background:transparent;
+	background:#f3f4f6;
 }
 .rdt_TableHeadRow{
-	display:flex;align-items:center;padding:8px 12px;border-bottom:none;background:transparent;border-radius:0;
+	display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid rgba(16,24,40,0.06);background:#f3f4f6;border-radius:0;
 }
 .rdt_TableHeadRow .rdt_TableCol{
 	color:var(--text);font-weight:700;font-size:15px;padding:8px 12px;
@@ -181,11 +205,11 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 	display:block;
 }
 .rdt_TableRow{
-	display:flex;align-items:center;padding:8px 12px;border-bottom:none;background:transparent;
+	display:flex;align-items:center;padding:8px 12px;border-bottom:none;background:#ffffff;
 }
-.rdt_TableRow:nth-child(odd){background:transparent}
-.rdt_TableRow:nth-child(even){background:transparent}
-.rdt_TableRow:hover{background:transparent}
+.rdt_TableRow:nth-child(odd){background:#ffffff}
+.rdt_TableRow:nth-child(even){background:#fafbfd}
+.rdt_TableRow:hover{background:rgba(37,99,235,0.04)}
 .rdt_TableCell{
 	padding:8px 12px;flex:1;display:flex;align-items:center;font-size:14px;color:var(--text);
 }
@@ -213,6 +237,15 @@ footer{margin-top:12px;color:var(--muted);font-size:13px}
 
 /* Tighten table fonts and spacing */
 .rdt_TableRow .rdt_TableCell, .rdt_TableHeadRow .rdt_TableCol{font-size:14px}
+
+/* Compact row variant (applied to main leaderboard and admin tables) */
+.compact .rdt_TableRow{padding:6px 10px}
+.compact .rdt_TableCell{padding:6px 10px;font-size:13px}
+.compact .rdt_TableHeadRow .rdt_TableCol{padding:6px 10px;font-size:13px}
+
+/* DataTable search animation (used by Leaderboard and Admin) */
+.data-table-anim{transition:transform .22s ease, box-shadow .22s ease}
+.data-table-anim.data-table-searching{transform:translateY(-4px) scale(1.005);box-shadow:0 14px 40px rgba(37,99,235,0.06)}
 
 /* Mobile-first admin card styles */
 .athletes-container{display:flex;flex-direction:column;gap:8px;margin-top:0}
