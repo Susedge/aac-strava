@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Auth callback</title>
+    <style>
+      body{font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial;background:linear-gradient(180deg,#07101b,#0f1724);color:#e6eef6;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+      .card{max-width:560px;padding:28px;border-radius:12px;background:rgba(255,255,255,0.02);text-align:center;box-shadow:0 6px 20px rgba(2,6,23,0.6)}
+      .btn{display:inline-block;margin-top:14px;padding:8px 14px;border-radius:8px;background:linear-gradient(90deg,#ff5a3c,#ff7b5a);color:white;text-decoration:none;border:none}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2 id="title">Signing in...</h2>
+      <p id="msg">Waiting for Strava...</p>
+      <button id="go" class="btn" style="display:none" onclick="location.href='/'">Go to leaderboard</button>
+    </div>
+
+    <script>
+      (async function(){
+        console.log('auth-callback page loaded');
+        const params = new URLSearchParams(location.search);
+        const code = params.get('code');
+        const error = params.get('error');
+        if (error) {
+          document.getElementById('title').textContent = 'Authorization failed';
+          document.getElementById('msg').textContent = error;
+          console.error('auth error', error);
+          return;
+        }
+        if (!code) {
+          document.getElementById('title').textContent = 'No code found';
+          document.getElementById('msg').textContent = 'No authorization code was returned.';
+          console.warn('no code in query');
+          return;
+        }
+
+        document.getElementById('msg').textContent = 'Exchanging code for tokens...';
+        console.log('Callback script running, code=', code);
+        const api = 'http://localhost:4000';
+        async function sendCode() {
+          console.log('Sending code to', api + '/auth/strava/callback');
+          const res = await fetch(api + '/auth/strava/callback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code })
+          });
+          return res;
+        }
+
+        try {
+          const res = await sendCode();
+          const json = await res.json();
+          console.log('exchange response', res.status, json);
+          if (!res.ok) {
+            document.getElementById('title').textContent = 'Exchange failed';
+            document.getElementById('msg').textContent = JSON.stringify(json);
+            return;
+          }
+          // Save athlete info to localStorage so frontend can show connected state
+          try {
+            if (json && json.data && json.data.athlete) {
+              localStorage.setItem('strava_athlete', JSON.stringify(json.data.athlete));
+            }
+          } catch (e) { console.warn('localStorage write failed', e) }
+            document.getElementById('title').textContent = 'Authorized';
+            document.getElementById('msg').textContent = 'Account connected. Redirecting...';
+            document.getElementById('go').style.display = 'inline-block';
+            // If opened as a popup, notify the opener window
+            try {
+              if (window.opener && !window.opener.closed) {
+                window.opener.postMessage({ type: 'strava-auth', status: 'ok', athlete: json.data && json.data.athlete }, '*');
+                // close popup after brief delay
+                setTimeout(()=> window.close(), 800);
+                return;
+              }
+            } catch (e) { /* ignore */ }
+            setTimeout(()=> location.href='/', 1200);
+        } catch (err) {
+          document.getElementById('title').textContent = 'Network error';
+          document.getElementById('msg').textContent = err.message || String(err);
+          console.error('network error sending code', err);
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,158 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Connect Strava</title>
+    <style>
+      body{font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial;background:#07101b;color:#e6eef6;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+      .card{max-width:720px;padding:20px;border-radius:10px;background:rgba(255,255,255,0.03);text-align:center}
+      .btn{display:inline-block;margin-top:14px;padding:8px 14px;border-radius:8px;background:linear-gradient(90deg,#ff5a3c,#ff7b5a);color:white;text-decoration:none;border:none}
+      .overlay-input{padding:8px;width:100%;box-sizing:border-box;border-radius:6px;border:1px solid rgba(255,255,255,0.06);margin-bottom:10px}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>Connect with Strava</h2>
+      <p>Click the button below to sign-in with your Strava account. This will store an admin token in the project so club activities can be aggregated.</p>
+
+      <div id="adminControls" style="margin-bottom:12px;display:none;flex-direction:column;align-items:center">
+        <div id="connectedInfo" style="margin-bottom:8px;color:#9aa4b2"></div>
+        <div style="display:flex;gap:8px">
+          <button id="disconnectBtn" class="btn" style="background:#888">Disconnect</button>
+          <button id="refreshBtn" class="btn">Refresh</button>
+        </div>
+      </div>
+
+      <button id="btn" class="btn">Connect Strava</button>
+
+      <div id="diag" style="margin-top:18px;text-align:left;font-size:0.95rem;color:#bcd">
+        <div><strong>Backend health:</strong> <span id="health">(checking...)</span></div>
+        <div><strong>Auth URL:</strong> <span id="authUrl">(loading...)</span></div>
+        <div><strong>Admin doc:</strong> <span id="adminDoc">(checking...)</span></div>
+        <div><strong>Clubs:</strong> <pre id="clubs" style="white-space:pre-wrap;background:rgba(255,255,255,0.04);padding:8px;border-radius:8px;max-height:180px;overflow:auto">(checking...)</pre></div>
+      </div>
+
+      <hr style="margin:18px 0;border:none;border-top:1px solid rgba(255,255,255,0.06)" />
+      <h3 style="margin-top:0">Admin: Set club</h3>
+      <p style="font-size:0.95rem;color:#cfe8ff;">If the detected club is incorrect, enter the club id and name to override it.</p>
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px">
+        <input id="club_id" placeholder="Club ID (e.g. 1388675)" style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit;width:200px">
+        <input id="club_name" placeholder="Club name (optional)" style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit;width:260px">
+        <button id="saveClub" class="btn">Save Club</button>
+      </div>
+      <div id="clubMsg" style="margin-top:12px;font-size:0.95rem;color:#9fd"> </div>
+    </div>
+
+    <script>
+      (async function(){
+  // No password gate on connect page; always initialize
+
+        // main init that wires up admin UI and auth button
+        const init = async () => {
+          const btn = document.getElementById('btn');
+          const api = window.__API || 'http://localhost:4000';
+          const healthEl = document.getElementById('health');
+          const authUrlEl = document.getElementById('authUrl');
+          const adminDocEl = document.getElementById('adminDoc');
+          const clubsEl = document.getElementById('clubs');
+
+          const adminControls = document.getElementById('adminControls');
+          const connectedInfo = document.getElementById('connectedInfo');
+          const disconnectBtn = document.getElementById('disconnectBtn');
+          const refreshBtn = document.getElementById('refreshBtn');
+
+          try {
+            const admRes = await fetch(api + '/debug/admin');
+            const admJson = await admRes.json();
+            const me = JSON.parse(localStorage.getItem('strava_athlete') || 'null');
+            if (admJson && admJson.admin && admJson.admin.athlete_id && me && String(me.id) === String(admJson.admin.athlete_id)) {
+              adminControls.style.display = 'flex';
+              connectedInfo.textContent = 'Connected: ' + (me.firstname || me.first_name || '') + ' ' + (me.lastname || me.last_name || '');
+            }
+          } catch (e) {
+            console.warn('admin controls check failed', e);
+          }
+
+          disconnectBtn.addEventListener('click', ()=>{ localStorage.removeItem('strava_athlete'); adminControls.style.display='none'; });
+          refreshBtn.addEventListener('click', async ()=>{ try { await fetch(api + '/aggregate/weekly', { method: 'POST', headers: { 'Content-Type': 'application/json' } }); alert('Aggregation started'); } catch(e){ alert('Failed to start aggregation') } });
+
+          // health
+          try {
+            const h = await fetch(api + '/health');
+            const hj = await h.json();
+            healthEl.textContent = hj && hj.status ? hj.status : JSON.stringify(hj);
+          } catch (e) { healthEl.textContent = 'unreachable: ' + (e.message || e); }
+
+          // auth url
+          let authUrl = null;
+          try {
+            const res = await fetch(api + '/auth/strava/url');
+            const json = await res.json();
+            authUrl = json && json.url || null;
+            authUrlEl.textContent = authUrl || '(none)';
+            if (authUrl) btn.addEventListener('click', ()=> { location.href = authUrl; });
+            else { btn.textContent = 'Unable to load auth URL'; btn.disabled = true; }
+          } catch (err) {
+            console.error('failed to fetch auth url', err);
+            authUrlEl.textContent = 'failed: ' + (err.message || err);
+            btn.textContent = 'Unable to load auth URL';
+            btn.disabled = true;
+          }
+
+          // admin doc
+          try {
+            const admRes = await fetch(api + '/debug/admin');
+            const admJson = await admRes.json();
+            if (admJson && admJson.admin) {
+              adminDocEl.textContent = `exists (athlete_id=${admJson.admin.athlete_id || 'n/a'}, club_id=${admJson.admin.club_id || 'n/a'})`;
+            } else {
+              adminDocEl.textContent = 'not found';
+            }
+          } catch (e) { adminDocEl.textContent = 'failed: ' + (e.message || e); }
+
+          // clubs via server (uses stored admin token if present)
+          try {
+            const c = await fetch(api + '/debug/admin-clubs');
+            if (c.ok) {
+              const cj = await c.json();
+              clubsEl.textContent = JSON.stringify(cj, null, 2);
+            } else {
+              const txt = await c.text();
+              clubsEl.textContent = `error ${c.status}: ${txt}`;
+            }
+          } catch (e) { clubsEl.textContent = 'failed: ' + (e.message || e); }
+
+          // Admin: set club override
+          const saveBtn = document.getElementById('saveClub');
+          const clubMsg = document.getElementById('clubMsg');
+          saveBtn.addEventListener('click', async () => {
+            const id = document.getElementById('club_id').value.trim();
+            const name = document.getElementById('club_name').value.trim();
+            if (!id) { clubMsg.textContent = 'Club id is required'; clubMsg.style.color = '#f88'; return; }
+            try {
+              const resp = await fetch(api + '/admin/set-club', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ club_id: id, club_name: name })
+              });
+              const j = await resp.json();
+              if (j.ok) {
+                clubMsg.style.color = '#9fd';
+                clubMsg.textContent = `Saved club ${j.club_id} ${j.club_name || ''}`;
+              } else {
+                clubMsg.style.color = '#f88';
+                clubMsg.textContent = (j.error || JSON.stringify(j));
+              }
+            } catch (e) {
+              clubMsg.style.color = '#f88';
+              clubMsg.textContent = 'Failed to save club: ' + (e.message || e);
+            }
+          });
+        };
+
+        // Always initialize the connect UI (no password prompt on this page)
+        await init();
+      })();
+    </script>
+  </body>
+</html>

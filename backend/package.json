@@ -1,0 +1,24 @@
+{
+  "name": "aac-strava-backend",
+  "version": "0.1.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "post-test": "node scripts/postTest.js",
+    "delete-test": "node scripts/deleteTest.js",
+    "seed-admin": "node scripts/seed_admin.js"
+  },
+  "dependencies": {
+    "axios": "^1.4.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "firebase-admin": "^11.10.0",
+    "minimist": "^1.2.8"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}

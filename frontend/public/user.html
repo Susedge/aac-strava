@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Member Runs</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/styles.css">
+    <style>
+      /* Local overrides for the member runs box to match app spacing */
+      .member-card{max-width:980px;margin:0 auto}
+      .runs-list{background:transparent;padding:12px;border-radius:10px}
+      .item{padding:12px;border-bottom:1px solid rgba(0,0,0,0.04);display:flex;justify-content:space-between;align-items:center}
+      .item:last-child{border-bottom:none}
+      .meta{color:var(--muted);font-size:13px}
+      a.btn{background:linear-gradient(90deg,#ff5a3c,#ff7b5a);padding:6px 10px;border-radius:8px;color:white;text-decoration:none}
+      .back{color:var(--muted);margin-bottom:12px;display:inline-block}
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="member-card admin-card" style="padding:18px 8px;">
+        <a class="back" href="/">← Back</a>
+        <h2 id="memberName">Member Runs</h2>
+        <div id="info" style="margin-bottom:8px;color:var(--muted)"></div>
+        <div class="runs-list" id="runs">Loading…</div>
+      </div>
+    </div>
+
+    <script>
+      (async function(){
+        const qs = new URLSearchParams(window.location.search);
+        const id = qs.get('id');
+        if (!id) {
+          document.getElementById('runs').textContent = 'Missing id';
+          return;
+        }
+        // Prefer an injected API base (window.__API). If not present, use a relative path
+        // so the request works when the backend is proxied or served from the same origin.
+        const api = (window.__API || '').trim();
+        // optionally allow a start_date param
+        const start = qs.get('start_date') || null;
+        try {
+          const url = (api ? api : '') + '/debug/club-activities' + (start ? ('?start_date=' + encodeURIComponent(start)) : '');
+          const res = await fetch(url);
+          if (!res.ok) {
+            const text = await res.text().catch(()=>'<no body>');
+            console.error('Failed fetching activities', res.status, text, 'url=', url);
+            document.getElementById('runs').textContent = 'Failed to fetch activities';
+            return;
+          }
+          const j = await res.json();
+          if (j && j.ok === false) { document.getElementById('runs').textContent = 'Failed to fetch activities'; return; }
+          const acts = j.activities || [];
+          // filter by athlete id or name key
+          const filtered = acts.filter(a => {
+            if (!a.athlete) return false;
+            if (String(a.athlete.id) === String(id)) return true;
+            const name = (a.athlete.firstname || a.athlete.first_name || '') + ' ' + (a.athlete.lastname || a.athlete.last_name || '');
+            if (('name:' + name).trim() === String(id)) return true;
+            if (String(a.athlete.username) && ('username:' + String(a.athlete.username)) === String(id)) return true;
+            return false;
+          }).sort((a,b)=> Date.parse(b.start_date) - Date.parse(a.start_date));
+
+          const memberName = (filtered[0] && (filtered[0].athlete && (filtered[0].athlete.firstname || filtered[0].athlete.first_name || filtered[0].athlete.name || filtered[0].athlete.username))) || id;
+          document.getElementById('memberName').textContent = memberName;
+          document.getElementById('info').textContent = `Showing ${filtered.length} runs`;
+          const container = document.getElementById('runs');
+          container.innerHTML = '';
+          if (filtered.length === 0) { container.textContent = 'No runs found for this member.'; return; }
+          for (const it of filtered) {
+            const d = document.createElement('div'); d.className = 'item';
+            const left = document.createElement('div');
+            // prefer start_date_local when available
+            const when = it.start_date_local ? new Date(it.start_date_local) : (it.start_date ? new Date(it.start_date) : null);
+            const whenStr = when ? when.toLocaleString() : 'Unknown date';
+            left.innerHTML = `<div style="font-weight:700">${((it.distance||0)/1000).toFixed(2)} km</div><div class="meta">${whenStr}</div>`;
+            const right = document.createElement('div');
+            // Only show Strava link if the activity id is present and looks numeric/valid
+            if (it.id && !isNaN(Number(it.id))) {
+              const link = document.createElement('a'); link.className='btn'; link.target='_blank'; link.href = `https://www.strava.com/activities/${it.id}`; link.textContent = 'Open in Strava';
+              right.appendChild(link);
+            } else {
+              const span = document.createElement('div'); span.className = 'meta'; span.textContent = 'No Strava link'; right.appendChild(span);
+            }
+            d.appendChild(left); d.appendChild(right);
+            container.appendChild(d);
+          }
+        } catch (e) {
+          console.error(e);
+          document.getElementById('runs').textContent = 'Failed to load activities';
+        }
+      })();
+    </script>
+  </body>
+</html>

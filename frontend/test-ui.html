@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Test UI - Firestore</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    label { display:block; margin-top:8px }
+    textarea { width: 100%; height: 80px }
+    pre { background:#f4f4f4; padding:12px }
+  </style>
+</head>
+<body>
+  <h1>Firestore Test UI</h1>
+  <section>
+    <h2>Post document</h2>
+    <label>Collection <input id="post-collection" value="test"></label>
+    <label>Doc ID (optional) <input id="post-doc"></label>
+    <label>JSON Data (optional)</label>
+    <textarea id="post-data">{"hello":"world"}</textarea>
+    <button id="btn-post">Post</button>
+  </section>
+
+  <section>
+    <h2>Delete document</h2>
+    <label>Collection <input id="del-collection" value="test"></label>
+    <label>Doc ID <input id="del-doc"></label>
+    <button id="btn-del">Delete</button>
+  </section>
+
+  <h2>Response</h2>
+  <pre id="resp">(no response yet)</pre>
+
+  <script>
+    const resp = document.getElementById('resp');
+    function show(o){ resp.textContent = JSON.stringify(o, null, 2); }
+
+    document.getElementById('btn-post').addEventListener('click', async ()=>{
+      const collection = document.getElementById('post-collection').value;
+      const doc = document.getElementById('post-doc').value || undefined;
+      let dataText = document.getElementById('post-data').value;
+      let data = {};
+      try { data = dataText ? JSON.parse(dataText) : {}; } catch(e){ show({error: 'invalid JSON'}); return; }
+      const r = await fetch('/test/post', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({collection, doc, data}) });
+      const j = await r.json(); show(j);
+    });
+
+    document.getElementById('btn-del').addEventListener('click', async ()=>{
+      const collection = document.getElementById('del-collection').value;
+      const doc = document.getElementById('del-doc').value;
+      if(!doc) { show({error:'doc required'}); return; }
+      const r = await fetch('/test/delete', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({collection, doc}) });
+      const j = await r.json(); show(j);
+    });
+  </script>
+</body>
+</html>
