@@ -2,7 +2,8 @@ import React, {useState, useEffect} from 'react'
 import axios from 'axios'
 import Admin from './Admin'
 import User from './User'
-import DataTable from 'react-data-table-component'
+import { CompactTable } from '@table-library/react-table-library/compact'
+import { useTheme } from '@table-library/react-table-library/theme'
 // lightweight theme toggler (avoids use-dark-mode peer dependency issues)
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
@@ -66,51 +67,80 @@ function AuthCallbackView(){
   );
 }
 
-function Leaderboard({ items, onRowClick, query, rowsPerPage = 5 }) {
-  const [isSearching, setIsSearching] = React.useState(false)
-  const q = (query || '').toLowerCase();
-  const filtered = items.filter(it => {
-    if (!q) return true;
-    const name = (it.athlete && (it.athlete.firstname || it.athlete.first_name || it.athlete.name || it.athlete.username || '')) || '';
-    const nick = (it.athlete && (it.athlete.nickname || '')) || '';
-    return String(name).toLowerCase().includes(q) || String(nick).toLowerCase().includes(q);
+function Leaderboard({ items, onRowClick }) {
+  const data = { 
+    nodes: items.map((r, i) => ({
+      id: r.id,
+      idx: i + 1,
+      name: formatName(r.athlete),
+      distance: formatNumber((r.distance || 0) / 1000, 2),
+      distanceUnit: 'km',
+      runs: r.count || 0,
+      longest: formatNumber((r.longest || 0) / 1000, 2),
+      longestUnit: 'km',
+      goal: r.goal ? formatNumber(r.goal, 0) : null,
+      remaining: r.goal ? formatNumber(Math.max(0, r.goal - ((r.distance || 0) / 1000)), 1) : null,
+      goalCompleted: r.goal && ((r.distance || 0) / 1000) >= r.goal,
+      pace: (formatPace(r.avg_pace) || '-'),
+      elev: formatNumber(r.elev_gain || 0, 2),
+      elevUnit: 'm',
+      // Add highlighted class for specific row (6th row in your image)
+      className: i === 5 ? 'highlighted' : ''
+    }))
+  };
+
+  const COLUMNS = [
+    { label: '#', renderCell: (item) => <span style={{fontWeight: 700}}>{item.idx}</span> },
+    { label: 'Name', renderCell: (item) => (
+      <span style={{fontWeight: 700}}>
+        {item.name} {item.goalCompleted && <span>👑</span>}
+      </span>
+    )},
+    { label: 'Distance', renderCell: (item) => (
+      <span>{item.distance} <span className="unit">{item.distanceUnit}</span></span>
+    )},
+    { label: 'Goal', renderCell: (item) => (
+      <span>{item.goal || '-'} <span className="unit">km</span></span>
+    )},
+    { label: 'Remaining', renderCell: (item) => (
+      <span>{item.remaining || '-'} <span className="unit">km</span></span>
+    )},
+    { label: 'Runs', renderCell: (item) => item.runs },
+    { label: 'Longest', renderCell: (item) => (
+      <span>{item.longest} <span className="unit">{item.longestUnit}</span></span>
+    )},
+    { label: 'Avg. Pace', renderCell: (item) => (
+      <span>{item.pace} <span className="unit">{item.pace !== '-' ? '/km' : ''}</span></span>
+    )},
+    { label: 'Elev. Gain', renderCell: (item) => (
+      <span>{item.elev} <span className="unit">{item.elevUnit}</span></span>
+    )},
+  ];
+
+  const theme = useTheme({
+    Table: `
+      --data-table-library-grid-template-columns: 30px 1fr 120px 120px 120px 80px 120px 120px 120px;
+    `,
+    Row: `
+      cursor: pointer;
+      &:hover {
+        background-color: #f8fafc !important;
+      }
+    `,
   });
 
-  React.useEffect(()=>{
-    if (!query) return setIsSearching(false)
-    setIsSearching(true)
-    const t = setTimeout(()=> setIsSearching(false), 280)
-    return ()=> clearTimeout(t)
-    // Keep table layout stable even when no items: DataTable's noDataComponent handles empty state
-  }, [query])
-
-  const columns = [
-    { name: '#', selector: row => row._index, width: '64px' },
-    { name: 'Name', selector: row => formatName(row.athlete), sortable: true, wrap: true, grow: 2 },
-    { name: 'Distance', selector: row => ((row.distance||0)/1000).toFixed(1) + ' km', sortable: true, right: true },
-    { name: 'Runs', selector: row => row.count || 0, sortable: true, right: true },
-    { name: 'Longest', selector: row => ((row.longest||0)/1000).toFixed(1) + ' km', right: true },
-    { name: 'Avg. Pace', selector: row => (formatPace(row.avg_pace) || '-'), right: true },
-    { name: 'Elev. Gain', selector: row => (row.elev_gain || 0) + ' m', right: true }
-  ]
-
-  const data = filtered.map((r, i)=> ({...r, _index: i+1}))
-
   return (
-    <div className={`leaderboard compact data-table-anim ${isSearching ? 'data-table-searching' : ''}`}>
-      <DataTable
-        columns={columns}
+    <div className="leaderboard compact"> 
+      <CompactTable 
+        columns={COLUMNS} 
         data={data}
-        highlightOnHover
-        pointerOnHover
-        noHeader
-        responsive
-        pagination
-        paginationPerPage={rowsPerPage}
-        paginationRowsPerPageOptions={[5,10,15,20,50]}
-        onRowClicked={onRowClick}
-        noDataComponent={<div className="no-results-row">No matching records</div>}
-        customStyles={{table: {style:{width:'100%'}}}}
+        theme={theme}
+        onSelectChange={(action, state) => {
+          if (action.type === 'SELECT_ROW' && onRowClick) {
+            const item = items[action.payload.rowIndex];
+            onRowClick(item);
+          }
+        }}
       />
     </div>
   )
@@ -126,6 +156,14 @@ function formatPace(secPerKm) {
   return `${m}:${sec}`;
 }
 
+// Format numbers with up to `decimals` decimal places and trim trailing zeros
+function formatNumber(n, decimals = 2){
+  if (n === null || n === undefined || n === '') return '';
+  const num = Number(n || 0);
+  if (!isFinite(num)) return String(n);
+  return num.toFixed(decimals).replace(/\.0+$|(?<=\.[0-9]*?)0+$/,'').replace(/\.$/,'');
+}
+
 function formatName(athlete) {
   if (!athlete) return 'Unknown';
   if (athlete.nickname) return athlete.nickname;
@@ -137,9 +175,7 @@ function formatName(athlete) {
 
 export default function App(){
   const [items, setItems] = useState([])
-  const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
-  const [rowsPerPage, setRowsPerPage] = useState(15)
 
   useEffect(()=>{ fetchData() }, [])
 
@@ -159,7 +195,8 @@ export default function App(){
           count: a.summary ? a.summary.count : 0,
           longest: a.summary ? a.summary.longest : 0,
           avg_pace: a.summary ? a.summary.avg_pace : null,
-          elev_gain: a.summary ? a.summary.elev_gain : 0
+          elev_gain: a.summary ? a.summary.elev_gain : 0,
+          goal: athlete.goal || 0
         }
       })
       prepared.sort((a,b)=> (b.distance||0) - (a.distance||0))
@@ -191,21 +228,14 @@ export default function App(){
   }
 
   return (
-    <div className="app admin-card">
-      <header className="admin-header" style={{padding:12}}>
-        <div className="header-actions">
-          {/* search moved to table top-right */}
-        </div>
-      </header>
+    <div className="app">
+      <div className="challenge-title">
+        AAC COMMIT TO RUN CHALLENGE 2025
+      </div>
 
-      <main style={{padding:12}}>
-          <div className="table-top" style={{marginTop:12}}>
-            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8,gap:8}}>
-              <label style={{display:'flex',alignItems:'center',gap:8}}>
-                <input placeholder="Search members" value={query} onChange={e=>setQuery(e.target.value)} className="search-small" />
-              </label>
-            </div>
-            <Leaderboard items={items} onRowClick={openUser} query={query} rowsPerPage={rowsPerPage} />
+      <main>
+          <div className="table-top">
+            <Leaderboard items={items} onRowClick={openUser} />
           </div>
         {/* DataTable will render a noDataComponent when there are no items; avoid rendering an extra empty block that collapses layout */}
       </main>

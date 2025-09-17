@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react'
-import DataTable from 'react-data-table-component'
+import { CompactTable } from '@table-library/react-table-library/compact'
+import { useTheme } from '@table-library/react-table-library/theme'
+import { useSort } from '@table-library/react-table-library/sort'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
 
@@ -8,12 +10,12 @@ export default function Admin(){
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [authed, setAuthed] = useState(false)
-  // default to 15 rows per page for consistency with main leaderboard
-  const [rowsPerPage, setRowsPerPage] = useState(15)
   const [passInput, setPassInput] = useState('')
   const [editing, setEditing] = useState({})
+  const [goalEditing, setGoalEditing] = useState({})
   const [status, setStatus] = useState({})
   const [dirty, setDirty] = useState({})
+  const [goalDirty, setGoalDirty] = useState({})
   const [savingAll, setSavingAll] = useState(false)
 
   useEffect(()=>{
@@ -53,9 +55,10 @@ export default function Admin(){
           if (!name) name = athlete.username || athlete.name || ''
         }
         const nickname = item.nickname || (athlete && athlete.nickname) || ''
+        const goal = item.goal || 0
         const distance_display = item.distance_display || item.distance || (item.summary && item.summary.distance) || ''
         const runs = item.runs || item.count || (item.summary && item.summary.count) || 0
-        return { id, name, nickname, distance_display, distance: item.distance, runs, raw: item }
+        return { id, name, nickname, goal, distance_display, distance: item.distance, runs, raw: item }
       }).filter(r => r.id !== null)
 
       if (normalized.length === 0 && raw.length > 0) {
@@ -65,22 +68,20 @@ export default function Admin(){
         setRows(normalized)
         // reset editing state
         const map = {}
-        normalized.forEach(r => { map[r.id] = r.nickname || '' })
+        const goalMap = {}
+        normalized.forEach(r => { 
+          map[r.id] = r.nickname || ''
+          goalMap[r.id] = r.goal || 0
+        })
         setEditing(map)
+        setGoalEditing(goalMap)
         setDirty({})
+        setGoalDirty({})
     }catch(e){
       console.error('failed to load admin athletes', e)
       setRows([])
     }finally{ setLoading(false) }
   }
-
-  const columns = useMemo(()=>[
-    { name: '#', cell: (row, index) => index + 1, width: '72px' },
-    { name: 'Name', selector: r => r.name || '', sortable: true, wrap: true },
-    { name: 'Nickname', selector: r => r.nickname || '', sortable: true },
-    { name: 'Distance', selector: r => r.distance_display || r.distance || '', right: true },
-    { name: 'Runs', selector: r => r.runs || 0, right: true }
-  ], [])
 
   function handleAuthSubmit(e){
     e && e.preventDefault()
@@ -94,11 +95,6 @@ export default function Admin(){
     }
   }
 
-  async function saveNickname(id){
-    // Deprecated: per-row save removed in favor of batch Save All
-    return
-  }
-
   // mark a row as dirty when editing changes from original
   function handleEdit(id, value){
     setEditing(s=>({...s,[id]:value}))
@@ -107,24 +103,66 @@ export default function Admin(){
     setDirty(d=>({...d,[id]: value !== was}))
   }
 
+  // mark a row as dirty when goal editing changes from original
+  function handleGoalEdit(id, value){
+    setGoalEditing(s=>({...s,[id]:Number(value) || 0}))
+    const orig = rows.find(r=>r.id===id)
+    const was = orig ? (orig.goal || 0) : 0
+    setGoalDirty(d=>({...d,[id]: Number(value) !== was}))
+  }
+
   async function saveAll(){
-    const toSave = Object.keys(dirty).filter(id => dirty[id])
-    if (toSave.length === 0) return alert('No changes to save')
+    const nicknameToSave = Object.keys(dirty).filter(id => dirty[id])
+    const goalToSave = Object.keys(goalDirty).filter(id => goalDirty[id])
+    const allToSave = [...new Set([...nicknameToSave, ...goalToSave])]
+    
+    if (allToSave.length === 0) return alert('No changes to save')
     setSavingAll(true)
     setStatus({})
 
-    for (const id of toSave){
+    for (const id of allToSave){
       const nickname = editing[id]
+      const goal = goalEditing[id]
+      const payload = {}
+      if (dirty[id]) payload.nickname = nickname
+      if (goalDirty[id]) payload.goal = goal
+      
       setStatus(s=>({...s,[id]:'saving'}))
+      console.log('Saving athlete', id, 'with payload:', payload)
       try{
+        
         const res = await fetch(`${API}/admin/athlete/${id}`, {
-          method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ nickname })
+          method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(payload)
         })
-        if (!res.ok) throw new Error('save failed')
-        // on success update rows
-        setRows(prev=> prev.map(r=> r.id===id ? {...r, nickname} : r))
+        if (!res.ok) {
+          const errorText = await res.text()
+          console.error('Save failed with status:', res.status, errorText)
+          throw new Error(`Save failed: ${res.status} ${errorText}`)
+        }
+        
+        // Parse response to confirm what was actually saved
+        const savedData = await res.json()
+        console.log('Save response:', savedData)
+        
+        // Extract athlete data from response
+        const athlete = savedData.athlete || {}
+        
+        // Only update UI with data that was confirmed saved by backend
+        const updates = {}
+        if (dirty[id] && athlete.nickname !== undefined) updates.nickname = athlete.nickname
+        if (goalDirty[id] && athlete.goal !== undefined) updates.goal = athlete.goal
+        
+        // on success update rows with confirmed data
+        setRows(prev=> prev.map(r=> r.id===id ? {...r, ...updates} : r))
         setStatus(s=>({...s,[id]:'success'}))
-        setDirty(d=>{ const n={...d}; delete n[id]; return n })
+        
+        // Only clear dirty flags for fields that were actually saved
+        if (dirty[id] && athlete.nickname !== undefined) {
+          setDirty(d=>{ const n={...d}; delete n[id]; return n })
+        }
+        if (goalDirty[id] && athlete.goal !== undefined) {
+          setGoalDirty(d=>{ const n={...d}; delete n[id]; return n })
+        }
       }catch(e){
         console.error('saveAll: failed saving', id, e)
         setStatus(s=>({...s,[id]:'error'}))
@@ -136,39 +174,70 @@ export default function Admin(){
     setSavingAll(false)
   }
 
-  // Build DataTable columns including editable nickname and status
-  const dtColumns = [
-    { name: '#', selector: (row) => row._index, width: '64px' },
-    { name: 'Name', selector: row => row.name, sortable: true, grow: 2, minWidth: '220px' },
-    { name: 'Nickname', cell: row => (
-        <input className="admin-input" value={editing[row.id] ?? ''} onChange={e=>handleEdit(row.id, e.target.value)} />
-      ), minWidth: '200px', grow: 1
-    },
-    { name: '', cell: row => (
-        <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:8}}>
-          {status[row.id] === 'success' && <span className="save-status save-success">Saved</span>}
-          {status[row.id] === 'error' && <span className="save-status save-error">Failed</span>}
-        </div>
-      ), width: '140px'
-    }
-  ]
-
-  // short search animation state (mirrors Leaderboard behavior)
-  const [isSearching, setIsSearching] = useState(false)
-  useEffect(()=>{
-    if (!search) return setIsSearching(false)
-    setIsSearching(true)
-    const t = setTimeout(()=> setIsSearching(false), 280)
-    return ()=> clearTimeout(t)
-  },[search])
-
-  // apply search filtering so DataTable only shows matching rows (keeps previous behavior)
+  // apply search filtering so CompactTable only shows matching rows
   const filtered = rows.filter(r => {
     if (!search) return true
     const s = search.toLowerCase()
     return (r.name||'').toLowerCase().includes(s) || (r.nickname||'').toLowerCase().includes(s) || (editing[r.id] || '').toLowerCase().includes(s)
   })
-  const data = filtered.map((r,i)=> ({...r,_index:i+1}))
+
+  // Build CompactTable data and columns
+  const data = { 
+    nodes: filtered.map((r, i) => ({
+      id: r.id,
+      idx: i + 1,
+      name: r.name,
+      nickname: r.nickname || '',
+      goal: r.goal || 0,
+      distance_display: r.distance_display,
+      runs: r.runs || 0,
+      raw: r
+    }))
+  };
+
+  const ADMIN_COLUMNS = [
+    { label: '#', renderCell: (item) => <span style={{fontWeight: 700}}>{item.idx}</span> },
+    { label: 'Name', renderCell: (item) => (
+      <div className="col-truncate" style={{fontWeight: 700}}>{item.name}</div>
+    ), sort: { sortKey: 'name' }},
+    { label: 'Nickname', renderCell: (item) => (
+      <input 
+        className="admin-input" 
+        value={editing[item.id] ?? ''} 
+        onChange={e=>handleEdit(item.id, e.target.value)} 
+      />
+    ), sort: { sortKey: 'nickname' }},
+    { label: 'Goal (km)', renderCell: (item) => (
+      <input 
+        className="admin-input admin-input-number" 
+        type="number" 
+        value={goalEditing[item.id] ?? 0} 
+        onChange={e=>handleGoalEdit(item.id, e.target.value)}
+      />
+    ), sort: { sortKey: 'goal' }}
+  ];
+
+  const theme = useTheme({
+    Table: `
+      --data-table-library-grid-template-columns: 40px 1fr 180px 120px;
+    `,
+    Row: `
+      cursor: default;
+      &:hover {
+        background-color: #f8fafc !important;
+      }
+    `,
+  });
+
+  const sort = useSort(data, {
+    onChange: () => {},
+  }, {
+    sortFns: {
+      name: (array) => array.sort((a, b) => a.name.localeCompare(b.name)),
+      nickname: (array) => array.sort((a, b) => (a.nickname || '').localeCompare(b.nickname || '')),
+      goal: (array) => array.sort((a, b) => (a.goal || 0) - (b.goal || 0)),
+    },
+  });
 
   return (
     <div className="admin-page admin-card">
@@ -200,24 +269,22 @@ export default function Admin(){
             </div>
           </header>
 
-          <main style={{marginTop:12}}>
+          <main style={{marginTop:20}}>
             {loading && <div className="loading">Loading…</div>}
             {!loading && rows.length===0 && <div className="empty">No athletes found</div>}
 
             {!loading && (
               <div className="admin-table-wrap compact">
-                <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8,gap:8}}>
+                <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8,marginTop:16,gap:8}}>
                   <input placeholder="Search members" value={search} onChange={e=>setSearch(e.target.value)} className="search-small" />
                 </div>
-                <DataTable
-                  columns={dtColumns}
+                <CompactTable
+                  columns={ADMIN_COLUMNS}
                   data={data}
-                  noHeader
-                  pagination
-                  paginationPerPage={rowsPerPage}
-                  paginationRowsPerPageOptions={[5,10,15,20,50]}
-                  noDataComponent={<div className="no-results-row">No matching members</div>}
+                  theme={theme}
+                  sort={sort}
                 />
+                {filtered.length === 0 && <div className="no-results-row">No matching members</div>}
               </div>
             )}
           </main>

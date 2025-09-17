@@ -804,30 +804,36 @@ app.get('/admin/athletes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message || String(e) }); }
 });
 
-// Admin: update an athlete's nickname and optional manual strava id
+// Admin: update an athlete's nickname, goal, and optional manual strava id
 app.post('/admin/athlete/:id', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
   const id = req.params && req.params.id;
-  const { nickname, manual_strava_id } = req.body || {};
+  const { nickname, goal, manual_strava_id } = req.body || {};
   if (!id) return res.status(400).json({ error: 'id required' });
   try {
     const update = {};
     if (typeof nickname !== 'undefined') update.nickname = nickname || null;
+    if (typeof goal !== 'undefined') update.goal = Number(goal) || 0;
     if (typeof manual_strava_id !== 'undefined') update.manual_strava_id = manual_strava_id || null;
     update.updated_at = Date.now();
     await db.collection('summary_athletes').doc(String(id)).set(update, { merge: true });
 
     // We no longer auto-fetch or persist avatars; manual_strava_id is stored as metadata only
 
-    // Also merge nickname into activities doc so frontend can show it
+    // Also merge nickname and goal into activities doc so frontend can show it
     try {
       const activityUpdate = {};
       if (typeof nickname !== 'undefined') activityUpdate['athlete.nickname'] = nickname || null;
+      if (typeof goal !== 'undefined') activityUpdate['athlete.goal'] = Number(goal) || 0;
       if (typeof manual_strava_id !== 'undefined') activityUpdate['athlete.manual_strava_id'] = manual_strava_id || null;
       if (Object.keys(activityUpdate).length) {
-        await db.collection('activities').doc(String(id)).set({ athlete: { nickname: nickname || null, manual_strava_id: manual_strava_id || null } }, { merge: true });
+        const athleteUpdate = {};
+        if (typeof nickname !== 'undefined') athleteUpdate.nickname = nickname || null;
+        if (typeof goal !== 'undefined') athleteUpdate.goal = Number(goal) || 0;
+        if (typeof manual_strava_id !== 'undefined') athleteUpdate.manual_strava_id = manual_strava_id || null;
+        await db.collection('activities').doc(String(id)).set({ athlete: athleteUpdate }, { merge: true });
       }
-    } catch(e){ console.warn('failed merging nickname into activities', e && e.message || e); }
+    } catch(e){ console.warn('failed merging athlete data into activities', e && e.message || e); }
 
     const doc = await db.collection('summary_athletes').doc(String(id)).get();
     res.json({ ok: true, athlete: doc.exists ? doc.data() : null });

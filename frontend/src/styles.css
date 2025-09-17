@@ -1,270 +1,542 @@
-:root{--bg:#07101b;--card:rgba(255,255,255,0.03);--muted:#9aa4b2;--accent:#ff7b5a;--text:#e6eef6}
-*{box-sizing:border-box}
-/* Theme classes: add .light-theme or .dark-theme on body to switch */
-:root{--bg:#f7fafc;--card:#ffffff;--muted:#6b7280;--accent:#2563eb;--text:#0b1220;--table-header-bg:#f3f4f6}
-*{box-sizing:border-box}
-/* Theme classes: add .light-theme or .dark-theme on body to switch */
-.light-theme{--bg:#f7fafc;--card:#ffffff;--muted:#6b7280;--accent:#2563eb;--text:#0b1220}
-.dark-theme{--bg:#0f1724;--card:#0b1220;--muted:#9aa4b2;--accent:#ff7b5a;--text:#e6eef6}
-
-/* Stylish scrollbars (WebKit and Firefox) */
-*{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.08) transparent}
-::-webkit-scrollbar{width:10px;height:10px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:linear-gradient(180deg, rgba(255,90,60,0.95), rgba(255,123,90,0.95));border-radius:8px;border:2px solid rgba(0,0,0,0.15)}
-::-webkit-scrollbar-thumb:hover{filter:brightness(0.95)}
-body,html,#root{height:100%;margin:0;font-family:Roboto,Inter,system-ui,Segoe UI,Helvetica,Arial;background:var(--bg);color:var(--text)}
-/* Prevent the overall page from scrolling; internal panels will scroll instead */
-.body, body{background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center}
-.app{width:100%;max-width:100%;padding:18px;min-height:100vh;display:block;align-items:flex-start}
-.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.header h1{margin:0;font-size:18px;color:var(--text)}
-.btn{background:var(--accent);padding:6px 10px;border-radius:6px;color:#fff;text-decoration:none;font-weight:600;font-size:13px;border:1px solid transparent}
-.leaderboard{background:transparent;padding:0;border-radius:0}
-.row{display:flex;align-items:center;padding:10px}
-.row:last-child{border-bottom:none}
-.row.compact{gap:10px}
-.row.clickable{cursor:pointer}
-.row .pos{width:36px;height:36px;border-radius:6px;background:transparent;display:flex;align-items:center;justify-content:center;font-weight:700}
-.athlete-col{display:flex;align-items:center;flex:1;gap:10px}
-.row .name{font-size:14px}
-.row .value{font-weight:700;color:var(--accent);min-width:80px;text-align:right;font-size:13px}
-.row .value.small{min-width:60px;text-align:center;color:#cbd5e1;font-weight:600}
-.row .value.dist{width:110px;text-align:right}
-.row .value.runs{width:60px;text-align:center;color:#cbd5e1;font-weight:700}
-
-/* table headers removed as requested */
-
-/* Floating admin button */
-.admin-fab{position:fixed;right:18px;top:18px;background:transparent;color:var(--text);padding:6px 8px;border-radius:6px;text-decoration:none;z-index:60;border:none;box-shadow:none}
-.admin-fab:hover{opacity:0.9}
-footer{margin-top:12px;color:var(--muted);font-size:13px}
-
-@media(max-width:640px){
-	.app{padding:10px}
-	header{flex-direction:column;align-items:flex-start;gap:8px}
-	.row .pos{width:32px;height:32px}
-	.row .name{font-size:14px}
-	.row .value{min-width:60px}
+/* Base styles */
+:root {
+  --bg: #f7fafc;
+  --card: #ffffff;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --text: #0b1220;
+  --table-header-bg: #f3f4f6;
 }
 
-/* Empty table state */
-.empty-table{display:flex;justify-content:center;align-items:center;padding:24px;border-radius:10px;background:transparent;margin-top:6px}
-.empty-table .empty-cell{color:var(--muted);font-size:14px;padding:8px 12px}
-
-.admin-page{width:100%;max-width:100%;padding:18px;box-sizing:border-box;border-radius:0;position:relative;z-index:1}
-.admin-card{background:var(--card);color:var(--text);border:none;box-shadow:0 8px 30px rgba(2,6,23,0.06);overflow:visible;border-radius:10px;padding:20px;max-width:none;width:100%}
-.admin-table{width:100%;border-collapse:collapse;margin-top:8px;background:transparent}
-.admin-table th{text-align:left;padding:12px 18px;color:var(--muted);font-size:13px;font-weight:700;background:rgba(255,255,255,0.02)}
-.admin-table td{padding:14px 18px;vertical-align:middle}
-
-/* Admin table fixed layout so header keeps width when no rows */
-.admin-table{table-layout:fixed}
-.admin-table th:nth-child(1), .admin-table td:nth-child(1){width:64px}
-.admin-table th:nth-child(2), .admin-table td:nth-child(2){width:360px}
-.admin-table th:nth-child(3), .admin-table td:nth-child(3){width:220px}
-.admin-table th:nth-child(4), .admin-table td:nth-child(4){width:160px}
-.admin-table input{padding:6px 8px;border-radius:6px;border:1px solid rgba(11,18,32,0.06);background:transparent;color:inherit}
-
-/* Ensure simple-table cells use same padding so headers align */
-.simple-table{width:100%;border-collapse:collapse;table-layout:auto}
-.simple-table th,.simple-table td{padding:14px 20px}
-
-/* Prevent table header shrink: give stable column width hints */
-.simple-table{table-layout:fixed}
-.simple-table th:nth-child(1), .simple-table td:nth-child(1){width:64px}
-.simple-table th:nth-child(2), .simple-table td:nth-child(2){width:320px}
-.simple-table th:nth-child(3), .simple-table td:nth-child(3){width:160px}
-.simple-table th:nth-child(4), .simple-table td:nth-child(4){width:96px}
-.simple-table th:nth-child(5), .simple-table td:nth-child(5){width:160px}
-.simple-table th:nth-child(6), .simple-table td:nth-child(6){width:160px}
-.simple-table th:nth-child(7), .simple-table td:nth-child(7){width:160px}
-
-/* Strava-like header + striped rows */
-/* Simplify table visuals: remove borders, stripes and hover backgrounds to render plain tables */
-.table-header-bg{background:rgba(255,255,255,0.04)}
-.table-row-odd{background:transparent}
-.table-row-even{background:rgba(255,255,255,0.01)}
-.table-row-hover:hover{background:rgba(255,255,255,0.03)}
-
-.simple-table thead th, .admin-table thead th{background:#f3f4f6;font-weight:700;color:var(--text);border-bottom:1px solid rgba(16,24,40,0.06);text-align:left}
-.simple-table tbody tr{background:transparent}
-.simple-table tbody tr:nth-child(odd){background:transparent}
-.simple-table tbody tr:nth-child(even){background:#fafbfd}
-.admin-table tbody tr:nth-child(even){background:#fafbfd}
-.simple-table tbody tr{border-bottom:none}
-.simple-table tbody tr:hover, .admin-table tbody tr:hover{background:rgba(37,99,235,0.04)}
-
-/* Force left alignment even if inline styles exist */
-.simple-table td, .admin-table td{ text-align:left !important }
-
-/* Numeric column helpers (override left alignment where appropriate) */
-.col-right{text-align:right !important}
-.col-center{text-align:center !important}
-
-/* remove top borders that previously caused subtle misalignment */
-.admin-table td{border-top:none}
-
-/* Left-align headers flush with first column cells */
-.simple-table, .admin-table{margin-left:0}
-.simple-table th:first-child, .admin-table th:first-child{padding-left:8px}
-.simple-table td:first-child, .admin-table td:first-child{padding-left:8px}
-
-/* Left align all table content to match the reference */
-.simple-table td, .simple-table th, .admin-table td, .admin-table th{text-align:left}
-
-/* Improved search box */
-.search-small{padding:8px 12px;border-radius:10px;border:1px solid rgba(16,24,40,0.08);width:220px;background:#fff;color:var(--text);box-shadow:0 2px 6px rgba(16,24,40,0.04)}
-
-/* Page loader overlay (light-themed) */
-.page-loader{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.85);z-index:9999}
-.loader-box{background:#ffffff;padding:16px 20px;border-radius:10px;box-shadow:0 10px 30px rgba(11,18,32,0.06);display:flex;align-items:center;gap:12px;color:var(--text);border:1px solid rgba(11,18,32,0.04)}
-.spinner{width:20px;height:20px;border-radius:50%;border:3px solid rgba(11,18,32,0.08);border-top-color:var(--accent);animation:spin 1s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* Unsaved marker for rows */
-.unsaved-dot{width:8px;height:8px;border-radius:50%;background:#ffb020;display:inline-block;margin-left:6px}
-
-/* Save All button */
-.save-all{background:#111;color:#fff;padding:8px 12px;border-radius:8px;border:none;font-weight:700}
-.admin-page .btn{font-size:13px;padding:0;border-radius:10px}
-.processing{padding:0;background:rgba(255,255,255,0.02);border-radius:8px}
-
-/* Admin-specific input and button styles */
-.admin-input{width:100%;padding:0;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
-.btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.03);color:var(--text);padding:0}
-.btn-small{padding:0;font-size:13px}
-
-/* Lock / modal like area for password (light-themed) */
-.admin-lock{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0;border-radius:10px;background:linear-gradient(180deg,#ffffff,#fbfbfc);border:1px solid rgba(11,18,32,0.06);color:var(--text)}
-.admin-lock h2{margin:0 0 12px 0}
-.lock-form{width:320px;max-width:100%;display:flex;flex-direction:column;gap:8px}
-.lock-form label{color:var(--muted);font-size:13px}
-
-
-/* Fullscreen modal overlay for admin unlock (light-themed) */
-.admin-overlay{position:fixed;top:0;left:0;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.85);z-index:9999}
-.admin-overlay .admin-lock{width:420px;max-width:92%;padding:20px;background:linear-gradient(180deg,#ffffff,#fbfbfc);box-shadow:0 20px 60px rgba(11,18,32,0.06);border-radius:14px;transform:translateY(0);animation:adminPop .22s ease both}
-.admin-overlay .lock-form{width:100%}
-.admin-overlay .lock-form input[type="password"]{width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(11,18,32,0.06);background:#fff;color:var(--text);font-size:15px;outline:none;box-shadow:inset 0 1px 0 rgba(11,18,32,0.02)}
-.admin-overlay .actions{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
-.admin-overlay .actions .btn{padding:8px 12px;border-radius:8px}
-.admin-overlay .actions .back-link{color:var(--text);text-decoration:none;padding-left:8px}
-.admin-overlay .hint{color:var(--muted);font-size:13px;margin-top:6px}
-
-/* Tidy up Unlock button specifically when inside the admin overlay */
-.admin-overlay .btn{padding:10px 16px;border-radius:10px;background:linear-gradient(90deg,#ff5a3c,#ff7b5a);color:#fff;border:none;font-weight:700;box-shadow:0 10px 30px rgba(11,18,32,0.06),0 6px 18px rgba(255,90,60,0.08);font-size:14px}
-.admin-overlay .btn:hover{filter:brightness(0.98)}
-.admin-overlay .btn:active{transform:translateY(1px)}
-.admin-overlay a.btn-ghost{background:transparent;border:1px solid rgba(11,18,32,0.06);color:var(--text);padding:8px 12px;border-radius:8px;text-decoration:none}
-.admin-overlay .btn:focus{outline:none;box-shadow:0 10px 30px rgba(11,18,32,0.06)}
-
-@keyframes adminPop{from{opacity:0;transform:translateY(-8px) scale(.995)}to{opacity:1;transform:translateY(0) scale(1)}}
-
-/* header layout */
-.admin-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.header-actions{display:flex;align-items:center;gap:8px}
-
-/* Smaller search box sitting top-right */
-.search-small{padding:6px 8px;border-radius:8px;border:1px solid rgba(11,18,32,0.06);width:180px;max-width:40vw}
-.rows-per-select{padding:6px 8px;border-radius:8px;border:1px solid rgba(11,18,32,0.06);background:transparent;color:var(--text);height:36px}
-
-/* Add margin above table */
-.table-top{margin-top:16px}
-
-/* Reserve vertical space for tables so header doesn't shift when tbody is empty */
-.admin-table-wrap, .table-top{min-height:440px}
-
-/* Compact no-results row styling */
-.no-results-row{padding:18px 16px;text-align:center;color:var(--muted);font-size:15px}
-
-/* small improvements for table/no-data */
-.loading,.empty{padding:0;border-radius:8px;background:rgba(255,255,255,0.01);color:var(--muted)}
-
-@media(max-width:760px){
-	.admin-page{padding:0}
-	.admin-header{flex-direction:column;align-items:flex-start}
+* {
+  box-sizing: border-box;
 }
 
-/* React Data Table Component adjustments to match leaderboard UI */
-.rdt_Table{
-	border-collapse:collapse;
-	width:100%;
-	background:transparent;
-}
-.rdt_TableHead{
-	background:#f3f4f6;
-}
-.rdt_TableHeadRow{
-	display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid rgba(16,24,40,0.06);background:#f3f4f6;border-radius:0;
-}
-.rdt_TableHeadRow .rdt_TableCol{
-	color:var(--text);font-weight:700;font-size:15px;padding:8px 12px;
-}
-.rdt_TableBody{
-	display:block;
-}
-.rdt_TableRow{
-	display:flex;align-items:center;padding:8px 12px;border-bottom:none;background:#ffffff;
-}
-.rdt_TableRow:nth-child(odd){background:#ffffff}
-.rdt_TableRow:nth-child(even){background:#fafbfd}
-.rdt_TableRow:hover{background:rgba(37,99,235,0.04)}
-.rdt_TableCell{
-	padding:8px 12px;flex:1;display:flex;align-items:center;font-size:14px;color:var(--text);
-}
-.rdt_Pagination{
-	padding:12px 8px;display:flex;justify-content:flex-end;align-items:center;gap:8px;color:#6b7280
+body, html, #root {
+  height: 100%;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-feature-settings: "liga" 1, "kern" 1;
 }
 
-/* Header CTA group styled like the leaderboard toggles */
-.toggle-group{display:inline-flex;background:#f3f4f6;border-radius:999px;padding:4px;border:1px solid rgba(11,18,32,0.04)}
-.toggle-group .btn{background:transparent;border-radius:999px;padding:8px 12px;color:#0b1220;border:none}
-.toggle-group .btn.active{background:#374151;color:#fff}
+/* Subtle scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
 
-/* Make the admin inputs and save buttons match the light style */
-.admin-input{background:#fff;border:1px solid rgba(11,18,32,0.06);color:#0b1220}
-.btn{background:linear-gradient(90deg,#ff5a3c,#ff7b5a);color:white;border:none}
-.btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--text)}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 
-/* Inline save status indicators */
-.save-status{font-size:12px;padding:4px 6px;border-radius:6px}
-.save-success{background:rgba(34,197,94,0.12);color:rgb(34,197,94);border:1px solid rgba(34,197,94,0.12)}
-.save-error{background:rgba(239,68,68,0.08);color:rgb(239,68,68);border:1px solid rgba(239,68,68,0.08)}
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.2);
+  border-radius: 2px;
+}
 
-/* disabled button */
-.btn[disabled]{opacity:0.5;cursor:not-allowed}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.4);
+}
 
-/* Tighten table fonts and spacing */
-.rdt_TableRow .rdt_TableCell, .rdt_TableHeadRow .rdt_TableCol{font-size:14px}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
 
-/* Compact row variant (applied to main leaderboard and admin tables) */
-.compact .rdt_TableRow{padding:6px 10px}
-.compact .rdt_TableCell{padding:6px 10px;font-size:13px}
-.compact .rdt_TableHeadRow .rdt_TableCol{padding:6px 10px;font-size:13px}
+/* Firefox scrollbar */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.2) transparent;
+}
 
-/* DataTable search animation (used by Leaderboard and Admin) */
-.data-table-anim{transition:transform .22s ease, box-shadow .22s ease}
-.data-table-anim.data-table-searching{transform:translateY(-4px) scale(1.005);box-shadow:0 14px 40px rgba(37,99,235,0.06)}
+.app {
+  width: 100%;
+  max-width: 100%;
+  padding: 18px;
+  min-height: 100vh;
+  display: block;
+  align-items: flex-start;
+}
 
-/* Mobile-first admin card styles */
-.athletes-container{display:flex;flex-direction:column;gap:8px;margin-top:0}
-.athlete-card{background:transparent;padding:0;border-radius:0;display:flex;flex-direction:column}
-.athlete-card{background:var(--card);padding:0;border-radius:8px;display:flex;flex-direction:column}
-.athlete-card .row-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.athlete-card .name{font-weight:600}
-.athlete-card .controls{display:flex;flex-direction:column;gap:6px}
-.athlete-card .controls label{display:flex;flex-direction:column;font-size:0.9rem}
-.athlete-card .controls input{padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
-.athlete-card .card-actions{display:flex;justify-content:flex-end;margin-top:8px}
-.athlete-card .rank{font-size:0.8rem;color:rgba(255,255,255,0.6)}
+/* Challenge Title Styling */
+.challenge-title {
+  background: linear-gradient(135deg, #fc4c02 0%, #ff6900 50%, #fc3503 100%);
+  color: white;
+  text-align: center;
+  padding: 20px 16px;
+  margin: -18px -18px 20px -18px;
+  font-family: 'Russo One', 'Impact', 'Arial Black', 'Helvetica Neue', Arial, sans-serif;
+  font-size: clamp(1.5rem, 4vw, 2.5rem);
+  font-weight: 400;
+  letter-spacing: 2px;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+  position: relative;
+  overflow: hidden;
+}
 
-/* Make the main app area scroll internally when content overflows */
-.app main{flex:1 1 auto;overflow:auto;padding-right:6px}
-.leaderboard{display:flex;flex-direction:column}
-.leaderboard .row{flex:0 0 auto}
-.leaderboard .row-list{display:flex;flex-direction:column;overflow:auto}
+.challenge-title::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  animation: shine 3s infinite;
+}
 
-/* Admin list scrolls internally */
-.athletes-container{overflow:auto}
-.athlete-card{flex:0 0 auto}
+@keyframes shine {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
+/* Strava-style table styling */
+.compact table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-top: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  border-left: none;
+  border-right: none;
+  border-radius: 0;
+  overflow: visible;
+  box-shadow: none;
+}
+
+.compact thead th {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+  font-weight: 600;
+  background: #f8fafc;
+  color: #374151;
+  font-size: 14px;
+}
+
+.compact tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+  font-size: 14px;
+}
+
+.compact tbody tr {
+  background: white;
+  position: relative;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.compact tbody tr:hover {
+  background: #f8fafc !important;
+}
+
+.compact tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Zebra striping for better readability */
+.compact tbody tr:nth-child(even) {
+  background: #f9fafb;
+}
+
+.compact tbody tr:nth-child(even):hover {
+  background: #f1f5f9 !important;
+}
+
+/* Distance column highlighting (lighter yellow) */
+.compact thead th:nth-child(3),
+.compact tbody td:nth-child(3) {
+  background: #fef3c7;
+  font-weight: normal;
+  color: #1f2937;
+}
+
+.compact thead th:nth-child(3) {
+  font-weight: 600;
+  background: #fde047;
+}
+
+/* Goal and Remaining columns styling */
+.compact thead th:nth-child(4),
+.compact tbody td:nth-child(4),
+.compact thead th:nth-child(5),
+.compact tbody td:nth-child(5) {
+  text-align: center;
+  font-weight: normal;
+}
+
+/* Typography for units */
+.unit {
+  font-size: 0.8em;
+  color: #6b7280;
+  font-weight: 400;
+  margin-left: 2px;
+}
+
+/* Rank column styling */
+.compact tbody td:first-child, 
+.compact thead th:first-child {
+  padding: 12px 2px;
+  text-align: center;
+  font-weight: 600;
+}
+
+/* Name column styling - reduce left padding to close gap */
+.compact tbody td:nth-child(2) {
+  padding-left: 4px;
+  font-weight: 600;
+}
+
+/* Orange accent border for highlighted rows */
+.compact tbody tr.highlighted {
+  border-left: 4px solid #ff6b35;
+}
+
+.compact tbody tr.highlighted td:first-child {
+  padding-left: 8px;
+}
+
+/* Loading and admin styles */
+.page-loader {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.85);
+  z-index: 9999;
+}
+
+.loader-box {
+  background: #ffffff;
+  padding: 16px 20px;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(11, 18, 32, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text);
+  border: 1px solid rgba(11, 18, 32, 0.04);
+}
+
+/* Admin login popup overlay */
+.admin-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  backdrop-filter: blur(4px);
+}
+
+/* Admin login popup box */
+.admin-lock {
+  background: white;
+  padding: 40px;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  width: 100%;
+  max-width: 400px;
+  margin: 20px;
+  border: 1px solid #e5e7eb;
+}
+
+.admin-lock h2 {
+  margin: 0 0 24px 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+  text-align: center;
+}
+
+.lock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lock-form label {
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.hint {
+  color: #6b7280;
+  font-size: 14px;
+  text-align: center;
+  margin-top: 6px;
+}
+
+/* Improved button styling */
+.lock-form .btn {
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  border: none;
+  font-size: 14px;
+}
+
+.unlock-btn {
+  background: linear-gradient(135deg, #fc4c02, #ff6900);
+  color: white;
+  box-shadow: 0 4px 12px rgba(252, 76, 2, 0.3);
+}
+
+.unlock-btn:hover {
+  background: linear-gradient(135deg, #e54302, #e55a00);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(252, 76, 2, 0.4);
+}
+
+.lock-form .btn-ghost {
+  background: transparent;
+  color: #6b7280;
+  border: 1px solid #d1d5db;
+  margin-left: 0 !important;
+}
+
+.lock-form .btn-ghost:hover {
+  background: #f9fafb;
+  color: #374151;
+  border-color: #9ca3af;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.lock-form .btn:active {
+  transform: translateY(0);
+}
+
+/* Button container styling */
+.lock-form > div:last-child {
+  display: flex !important;
+  gap: 12px !important;
+  margin-top: 24px !important;
+  justify-content: center !important;
+  align-items: center !important;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 3px solid rgba(11, 18, 32, 0.08);
+  border-top-color: var(--accent);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Admin header */
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Table container */
+.table-top {
+  margin-top: 16px;
+}
+
+/* Mobile responsive */
+@media(max-width: 720px) {
+  .app {
+    padding: 10px;
+  }
+  
+  .compact thead th {
+    padding: 8px 6px;
+    font-size: 12px;
+  }
+  
+  .compact tbody td {
+    padding: 8px 6px;
+    font-size: 12px;
+  }
+  
+  .compact tbody td:first-child,
+  .compact thead th:first-child {
+    width: 35px;
+    padding: 8px 4px;
+  }
+}
+
+/* Admin page styling to match main page */
+.admin-page {
+  width: 100%;
+  max-width: 100%;
+  padding: 18px;
+  min-height: 100vh;
+  display: block;
+  align-items: flex-start;
+  background: var(--bg);
+}
+
+/* Admin table wrapper */
+.admin-table-wrap {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Admin input fields */
+.admin-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  transition: all 0.2s ease;
+}
+
+.admin-input:focus {
+  outline: none;
+  border-color: #fc4c02;
+  box-shadow: 0 0 0 3px rgba(252, 76, 2, 0.1);
+}
+
+.admin-input-number {
+  width: 80px;
+  text-align: center;
+}
+
+/* Admin buttons */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: #6b7280;
+  border: 1px solid #d1d5db;
+}
+
+.btn-ghost:hover {
+  background: #f9fafb;
+  color: #374151;
+  border-color: #9ca3af;
+}
+
+.save-all {
+  background: linear-gradient(135deg, #fc4c02, #ff6900);
+  color: white;
+  padding: 12px 24px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.save-all:hover:not(:disabled) {
+  background: linear-gradient(135deg, #e54302, #e55a00);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(252, 76, 2, 0.3);
+}
+
+.save-all:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.unlock-btn {
+  background: linear-gradient(135deg, #fc4c02, #ff6900);
+  color: white;
+  font-weight: 600;
+}
+
+.unlock-btn:hover {
+  background: linear-gradient(135deg, #e54302, #e55a00);
+}
+
+/* Search input */
+.search-small {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  width: 200px;
+  transition: all 0.2s ease;
+}
+
+.search-small:focus {
+  outline: none;
+  border-color: #fc4c02;
+  box-shadow: 0 0 0 3px rgba(252, 76, 2, 0.1);
+}
+
+/* Status indicators */
+.save-status {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.save-success {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.save-error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* No results styling */
+.no-results-row {
+  text-align: center;
+  padding: 40px 20px;
+  color: #6b7280;
+  font-style: italic;
+}
