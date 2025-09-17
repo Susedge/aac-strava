@@ -61,7 +61,7 @@
         pwd.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') unlock.click(); });
       })();
 
-      const API = (window.__API_BASE__ || 'http://localhost:4000');
+      const API = (window.__API_BASE__ || 'https://aac-strava-backend.onrender.com');
       async function load(){
         const container = document.getElementById('athletes'); container.innerHTML = '<div class="loading">Loading…</div>';
         try{

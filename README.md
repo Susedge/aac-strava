@@ -2,7 +2,13 @@
 
 Starter project: Strava club leaderboard with Firebase-backed weekly data.
 
-Overview
+## Live Deployment
+
+- **Frontend**: https://aac-tracker.web.app (Firebase Hosting)
+- **Backend**: https://aac-strava-backend.onrender.com (Render)
+- **Database**: Firebase Firestore
+
+## Overview
 - Backend: Node + Express. Handles Strava OAuth, token exchange, and leaderboard aggregation.
 - Frontend: Vite + React. Sign-in with Strava and animated leaderboard UI.
 - Database: Firebase Firestore for storing athlete tokens and weekly totals.
@@ -57,3 +63,57 @@ Admin token refresh
 
 	$resp = Invoke-RestMethod -Uri 'http://localhost:4000/admin/refresh' -Method Post -Verbose
 	$resp | ConvertTo-Json -Depth 5
+
+## Deployment
+
+### Deploy to Production
+
+**Backend (Render)**
+- Backend automatically deploys from GitHub when you push to the main branch
+- Environment variables are configured in Render dashboard
+- Manual deploy: Go to Render dashboard → Your service → Manual Deploy
+
+**Frontend (Firebase Hosting)**
+```bash
+cd frontend
+npm run build
+firebase deploy --only hosting
+```
+
+Or deploy via GitHub Actions (automatic on push to main):
+- GitHub Actions workflow deploys automatically when you push changes
+- Configured in `.github/workflows/deploy.yml`
+
+### Switch Between Localhost and Production
+
+**For Local Development:**
+
+1. **Backend Environment** (`backend/.env`):
+```env
+STRAVA_REDIRECT_URI=http://localhost:5173/auth/callback
+```
+
+2. **Frontend Environment** (create `frontend/.env.local`):
+```env
+VITE_API_BASE=http://localhost:4000
+```
+
+3. **Strava App Settings**:
+   - Authorization Callback Domain: `localhost:5173`
+
+**For Production:**
+
+1. **Backend Environment** (Render dashboard):
+```env
+STRAVA_REDIRECT_URI=https://aac-tracker.web.app/auth/callback
+```
+
+2. **Frontend Environment** (`frontend/.env.production`):
+```env
+VITE_API_BASE=https://aac-strava-backend.onrender.com
+```
+
+3. **Strava App Settings**:
+   - Authorization Callback Domain: `aac-tracker.web.app`
+
+**Note**: The frontend automatically uses `.env.production` when building for production (`npm run build`) and `.env.local` or `.env` for development (`npm run dev`).

@@ -176,6 +176,7 @@ function formatName(athlete) {
 export default function App(){
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
+  const [lastUpdated, setLastUpdated] = useState(null)
 
   useEffect(()=>{ fetchData() }, [])
 
@@ -201,6 +202,16 @@ export default function App(){
       })
       prepared.sort((a,b)=> (b.distance||0) - (a.distance||0))
       setItems(prepared)
+      // Compute last updated timestamp from activities summary.updated_at if available
+      try {
+        const timestamps = rows.map(r => (r.summary && r.summary.updated_at) || null).filter(Boolean);
+        if (timestamps.length) {
+          const maxTs = Math.max(...timestamps);
+          setLastUpdated(new Date(maxTs).toISOString());
+        } else {
+          setLastUpdated(null);
+        }
+      } catch (e) { setLastUpdated(null); }
     }catch(e){
       console.error(e)
     }finally{
@@ -231,6 +242,32 @@ export default function App(){
     <div className="app">
       <div className="challenge-title">
         AAC COMMIT TO RUN CHALLENGE 2025
+        {lastUpdated && (
+          <div 
+            style={{
+              fontSize: '11px',
+              fontFamily: 'Arial, sans-serif',
+              fontWeight: 'normal',
+              color: 'white',
+              textAlign: 'center',
+              marginTop: '5px',
+              textTransform: 'none',
+              letterSpacing: 'normal',
+              lineHeight: '1',
+              fontStyle: 'normal'
+            }}
+          >
+            Last updated: {new Date(lastUpdated).toLocaleDateString('en-US', {
+              month: '2-digit',
+              day: '2-digit', 
+              year: 'numeric'
+            })}, {new Date(lastUpdated).toLocaleTimeString('en-US', {
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true
+            })}
+          </div>
+        )}
       </div>
 
       <main>

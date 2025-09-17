@@ -49,7 +49,7 @@
         document.getElementById('msg').textContent = 'Exchanging code for tokens...';
         console.log('Callback script running, code=', code);
         codeSpan.textContent = code;
-        const api = 'http://localhost:4000';
+        const api = 'https://aac-strava-backend.onrender.com';
         async function sendCode() {
           console.log('Sending code to', api + '/auth/strava/callback');
           const res = await fetch(api + '/auth/strava/callback', {
