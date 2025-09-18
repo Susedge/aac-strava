@@ -93,7 +93,7 @@ function Leaderboard({ items, onRowClick }) {
     { label: '#', renderCell: (item) => <span style={{fontWeight: 700}}>{item.idx}</span> },
     { label: 'Name', renderCell: (item) => (
       <span style={{fontWeight: 700}}>
-        {item.name} {item.goalCompleted && <span>👑</span>}
+        {item.goalCompleted && <span>🏆 </span>}{item.name}
       </span>
     )},
     { label: 'Distance', renderCell: (item) => (
@@ -103,7 +103,14 @@ function Leaderboard({ items, onRowClick }) {
       <span>{item.goal || '-'} <span className="unit">km</span></span>
     )},
     { label: 'Remaining', renderCell: (item) => (
-      <span>{item.remaining || '-'} <span className="unit">km</span></span>
+      <div style={item.goalCompleted ? {
+        backgroundColor: '#fef3c7', 
+        margin: '-12px -16px', 
+        padding: '12px 16px', 
+        fontWeight: 'bold'
+      } : {}}>
+        {item.goalCompleted ? '🎉Completed!🎉' : (item.remaining || '-')} {!item.goalCompleted && item.remaining && <span className="unit">km</span>}
+      </div>
     )},
     { label: 'Runs', renderCell: (item) => item.runs },
     { label: 'Longest', renderCell: (item) => (
