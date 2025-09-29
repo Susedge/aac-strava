@@ -6,7 +6,7 @@ import { CompactTable } from '@table-library/react-table-library/compact'
 import { useTheme } from '@table-library/react-table-library/theme'
 // lightweight theme toggler (avoids use-dark-mode peer dependency issues)
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
+const API = import.meta.env.VITE_API_BASE || 'https://aac-strava-backend.onrender.com'
 
 function AuthCallbackView(){
   const [status, setStatus] = useState('Waiting for Strava…');
@@ -184,8 +184,41 @@ export default function App(){
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState(null)
+  const [countdown, setCountdown] = useState('')
 
   useEffect(()=>{ fetchData() }, [])
+
+  // Countdown to Dec 11 12:00 PM Philippine Time (UTC+8).
+  // We compute target as UTC: Dec 11 04:00 UTC (12:00 PH), and if that date has passed this year, use next year.
+  useEffect(() => {
+    function updateCountdown() {
+      const now = Date.now();
+      const nowUtcYear = new Date().getUTCFullYear();
+      let target = Date.UTC(nowUtcYear, 11, 11, 4, 0, 0); // Dec 11, 04:00 UTC == 12:00 PH
+      if (target <= now) {
+        target = Date.UTC(nowUtcYear + 1, 11, 11, 4, 0, 0);
+      }
+      const diff = target - now;
+      if (diff <= 0) {
+        setCountdown('0 days 0 hours');
+        return;
+      }
+      const days = Math.floor(diff / 86400000);
+      const hours = Math.floor((diff % 86400000) / 3600000);
+      const minutes = Math.floor((diff % 3600000) / 60000);
+      const seconds = Math.floor((diff % 60000) / 1000);
+      // Always show seconds. When days > 0 show: "X days HH:MM:SS", otherwise "HH:MM:SS".
+      const pad = (n) => String(n).padStart(2, '0');
+      if (days > 0) {
+        setCountdown(`${days} days ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
+      } else {
+        setCountdown(`${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
+      }
+    }
+    updateCountdown();
+    const id = setInterval(updateCountdown, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   async function fetchData(){
     try{
@@ -250,30 +283,44 @@ export default function App(){
       <div className="challenge-title">
         AAC COMMIT TO RUN CHALLENGE 2025
         {lastUpdated && (
-          <div 
-            style={{
-              fontSize: '11px',
-              fontFamily: 'Arial, sans-serif',
-              fontWeight: 'normal',
-              color: 'white',
-              textAlign: 'center',
-              marginTop: '5px',
-              textTransform: 'none',
-              letterSpacing: 'normal',
-              lineHeight: '1',
-              fontStyle: 'normal'
-            }}
-          >
-            Last updated: {new Date(lastUpdated).toLocaleDateString('en-US', {
-              month: '2-digit',
-              day: '2-digit', 
-              year: 'numeric'
-            })}, {new Date(lastUpdated).toLocaleTimeString('en-US', {
-              hour: 'numeric',
-              minute: '2-digit',
-              hour12: true
-            })}
-          </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '12px',
+                fontSize: '11px',
+                fontFamily: 'Arial, sans-serif',
+                fontWeight: 'normal',
+                color: 'white',
+                textTransform: 'none',
+                letterSpacing: 'normal',
+                lineHeight: '1',
+                fontStyle: 'normal',
+                marginTop: '5px'
+              }}
+            >
+              <div>
+                Last updated: {new Date(lastUpdated).toLocaleDateString('en-US', {
+                  month: '2-digit',
+                  day: '2-digit', 
+                  year: 'numeric'
+                })}, {new Date(lastUpdated).toLocaleTimeString('en-US', {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true
+                })}
+              </div>
+
+              {/* visual separator */}
+              <div aria-hidden style={{width:1, height:14, background:'rgba(255,255,255,0.22)'}} />
+
+              {/* countdown to Dec 11 12:00 PM PH */}
+              <div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-start'}}>
+                <div style={{fontFamily: 'monospace', fontSize: '11px', color: '#fff', opacity: 0.95}} title="Countdown to Dec 11 12:00 PM (PH)">{countdown}</div>
+                <div style={{fontSize: '10px', color: 'rgba(255,255,255,0.7)', marginTop: 2}}>Countdown until Dec 11 12:00 PM (PH)</div>
+              </div>
+            </div>
         )}
       </div>
 
