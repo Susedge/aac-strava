@@ -450,6 +450,65 @@ app.post('/aggregate/weekly', async (req, res) => {
         }
         console.log(`Fetched ${acts.length} total club activities across ${page} pages`);
 
+        // Store each activity in raw_activities collection for data preservation
+        try {
+          const batch = db.batch();
+          let storedCount = 0;
+          for (const act of acts) {
+            if (!act.id) continue; // Skip if no Strava activity ID
+            const activityDoc = {
+              strava_id: String(act.id),
+              athlete_id: act.athlete && act.athlete.id ? String(act.athlete.id) : null,
+              athlete_name: act.athlete ? `${act.athlete.firstname || ''} ${act.athlete.lastname || ''}`.trim() : null,
+              distance: Number(act.distance || 0),
+              moving_time: Number(act.moving_time || 0),
+              start_date: act.start_date || null,
+              type: act.type || 'Run',
+              name: act.name || 'Activity',
+              elevation_gain: Number(act.total_elevation_gain || act.elev_total || 0),
+              source: 'strava_api',
+              fetched_at: Date.now(),
+              updated_at: Date.now()
+            };
+            // Use strava_id as document ID to avoid duplicates
+            batch.set(db.collection('raw_activities').doc(`strava_${act.id}`), activityDoc, { merge: true });
+            storedCount++;
+          }
+          await batch.commit();
+          console.log(`Stored ${storedCount} activities in raw_activities collection`);
+        } catch (storeErr) {
+          console.warn('Failed to store raw activities', storeErr.message || storeErr);
+        }
+
+        // Load manual activities from raw_activities collection
+        let manualActivities = [];
+        try {
+          const manualSnaps = await db.collection('raw_activities')
+            .where('source', '==', 'manual')
+            .get();
+          manualActivities = manualSnaps.docs.map(d => d.data());
+          console.log(`Loaded ${manualActivities.length} manual activities from raw_activities`);
+        } catch (manualErr) {
+          console.warn('Failed to load manual activities', manualErr.message || manualErr);
+        }
+
+        // Combine Strava activities + manual activities
+        const allActivities = [...acts, ...manualActivities.map(ma => ({
+          id: ma.strava_id || `manual_${ma.athlete_id}_${ma.start_date}`,
+          athlete: { 
+            id: ma.athlete_id, 
+            firstname: (ma.athlete_name || '').split(' ')[0] || '',
+            lastname: (ma.athlete_name || '').split(' ').slice(1).join(' ') || ''
+          },
+          distance: ma.distance,
+          moving_time: ma.moving_time,
+          start_date: ma.start_date,
+          type: ma.type,
+          name: ma.name,
+          total_elevation_gain: ma.elevation_gain
+        }))];
+        console.log(`Total activities (Strava + Manual): ${allActivities.length}`);
+
         // Aggregate activities by a robust athlete key (id preferred, fallback to username or name)
         const agg = new Map();
         const makeAthleteKey = (a) => {
@@ -463,7 +522,7 @@ app.post('/aggregate/weekly', async (req, res) => {
           return null;
         };
 
-        for (const it of acts) {
+        for (const it of allActivities) {
           if (it.start_date) {
             const ts = Date.parse(it.start_date);
             if (!Number.isNaN(ts) && ts / 1000 < oneWeekAgo) continue;
@@ -884,6 +943,179 @@ app.get('/debug/admin', async (req, res) => {
   } catch (err) {
     console.error('debug admin failed', err);
     res.status(500).json({ error: 'failed' });
+  }
+});
+
+// ============================================================================
+// MANUAL ACTIVITY MANAGEMENT ENDPOINTS
+// ============================================================================
+
+// Admin: List all raw activities (individual activity records)
+app.get('/admin/raw-activities', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const athleteId = req.query && req.query.athlete_id ? String(req.query.athlete_id) : null;
+    let query = db.collection('raw_activities');
+    
+    if (athleteId) {
+      query = query.where('athlete_id', '==', athleteId);
+    }
+    
+    const snaps = await query.orderBy('start_date', 'desc').limit(500).get();
+    const activities = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
+    res.json({ ok: true, activities, count: activities.length });
+  } catch (e) {
+    console.error('Failed to list raw activities', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Admin: Add a new manual activity
+app.post('/admin/raw-activities', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const { athlete_id, athlete_name, distance, moving_time, start_date, type, name, elevation_gain } = req.body || {};
+    
+    if (!athlete_id) return res.status(400).json({ error: 'athlete_id required' });
+    if (!distance && distance !== 0) return res.status(400).json({ error: 'distance required' });
+    if (!start_date) return res.status(400).json({ error: 'start_date required (YYYY-MM-DD or ISO)' });
+    
+    const activity = {
+      athlete_id: String(athlete_id),
+      athlete_name: athlete_name || null,
+      distance: Number(distance) || 0,
+      moving_time: Number(moving_time) || 0,
+      start_date: start_date,
+      type: type || 'Run',
+      name: name || 'Manual Activity',
+      elevation_gain: Number(elevation_gain) || 0,
+      source: 'manual',
+      created_at: Date.now(),
+      updated_at: Date.now()
+    };
+    
+    const docRef = await db.collection('raw_activities').add(activity);
+    console.log(`Created manual activity ${docRef.id} for athlete ${athlete_id}`);
+    
+    res.json({ ok: true, activity: { id: docRef.id, ...activity } });
+  } catch (e) {
+    console.error('Failed to create activity', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Admin: Update an existing activity
+app.put('/admin/raw-activities/:id', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  const id = req.params && req.params.id;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  
+  try {
+    const { athlete_id, athlete_name, distance, moving_time, start_date, type, name, elevation_gain } = req.body || {};
+    
+    const update = { updated_at: Date.now() };
+    if (athlete_id !== undefined) update.athlete_id = String(athlete_id);
+    if (athlete_name !== undefined) update.athlete_name = athlete_name;
+    if (distance !== undefined) update.distance = Number(distance) || 0;
+    if (moving_time !== undefined) update.moving_time = Number(moving_time) || 0;
+    if (start_date !== undefined) update.start_date = start_date;
+    if (type !== undefined) update.type = type;
+    if (name !== undefined) update.name = name;
+    if (elevation_gain !== undefined) update.elevation_gain = Number(elevation_gain) || 0;
+    
+    await db.collection('raw_activities').doc(id).set(update, { merge: true });
+    const doc = await db.collection('raw_activities').doc(id).get();
+    
+    console.log(`Updated activity ${id}`);
+    res.json({ ok: true, activity: doc.exists ? { id: doc.id, ...doc.data() } : null });
+  } catch (e) {
+    console.error('Failed to update activity', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Admin: Delete an activity
+app.delete('/admin/raw-activities/:id', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  const id = req.params && req.params.id;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  
+  try {
+    await db.collection('raw_activities').doc(id).delete();
+    console.log(`Deleted activity ${id}`);
+    res.json({ ok: true, deleted: id });
+  } catch (e) {
+    console.error('Failed to delete activity', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Admin: Bulk import activities from CSV/JSON
+app.post('/admin/raw-activities/bulk', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const { activities } = req.body || {};
+    if (!Array.isArray(activities)) return res.status(400).json({ error: 'activities array required' });
+    
+    const batch = db.batch();
+    const created = [];
+    
+    for (const act of activities) {
+      if (!act.athlete_id || (!act.distance && act.distance !== 0) || !act.start_date) {
+        console.warn('Skipping invalid activity', act);
+        continue;
+      }
+      
+      const activity = {
+        athlete_id: String(act.athlete_id),
+        athlete_name: act.athlete_name || null,
+        distance: Number(act.distance) || 0,
+        moving_time: Number(act.moving_time) || 0,
+        start_date: act.start_date,
+        type: act.type || 'Run',
+        name: act.name || 'Manual Activity',
+        elevation_gain: Number(act.elevation_gain) || 0,
+        source: act.source || 'bulk_import',
+        created_at: Date.now(),
+        updated_at: Date.now()
+      };
+      
+      const docRef = db.collection('raw_activities').doc();
+      batch.set(docRef, activity);
+      created.push({ id: docRef.id, ...activity });
+    }
+    
+    await batch.commit();
+    console.log(`Bulk imported ${created.length} activities`);
+    res.json({ ok: true, imported: created.length, activities: created });
+  } catch (e) {
+    console.error('Failed to bulk import', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Admin: Export athletes as CSV template for manual data entry
+app.get('/admin/export-csv-template', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const snaps = await db.collection('summary_athletes').orderBy('name').get();
+    const athletes = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
+    
+    let csv = 'athlete_id,athlete_name,distance,moving_time,start_date,type,name,elevation_gain\n';
+    
+    athletes.forEach(athlete => {
+      const id = athlete.id;
+      const name = (athlete.name || athlete.nickname || 'Unknown').replace(/,/g, ' ');
+      // Template with example values
+      csv += `${id},${name},5000,1800,2025-09-13,Run,September Activity,100\n`;
+    });
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="activity-import-template.csv"');
+    res.send(csv);
+  } catch (e) {
+    console.error('Failed to export CSV template', e);
+    res.status(500).json({ error: e.message || String(e) });
   }
 });
 

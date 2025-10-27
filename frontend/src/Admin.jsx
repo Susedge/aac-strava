@@ -17,11 +17,30 @@ export default function Admin(){
   const [dirty, setDirty] = useState({})
   const [goalDirty, setGoalDirty] = useState({})
   const [savingAll, setSavingAll] = useState(false)
+  const [activeTab, setActiveTab] = useState('members') // 'members' or 'activities'
+  
+  // Activity management state
+  const [activities, setActivities] = useState([])
+  const [activitiesLoading, setActivitiesLoading] = useState(false)
+  const [showAddActivity, setShowAddActivity] = useState(false)
+  const [newActivity, setNewActivity] = useState({
+    athlete_id: '',
+    athlete_name: '',
+    distance: '',
+    moving_time: '',
+    start_date: '',
+    type: 'Run',
+    name: '',
+    elevation_gain: ''
+  })
 
   useEffect(()=>{
     const ok = sessionStorage.getItem('aac_admin_authed') === '1'
     setAuthed(!!ok)
-    if (ok) load()
+    if (ok) {
+      load()
+      loadActivities()
+    }
   }, [])
 
   async function load(){
@@ -239,6 +258,138 @@ export default function Admin(){
     },
   });
 
+  // ============================================================================
+  // ACTIVITY MANAGEMENT FUNCTIONS
+  // ============================================================================
+  
+  async function loadActivities(){
+    setActivitiesLoading(true)
+    try{
+      const res = await fetch(`${API}/admin/raw-activities`)
+      const j = await res.json()
+      setActivities(j.activities || [])
+    }catch(e){
+      console.error('Failed to load activities', e)
+      setActivities([])
+    }finally{
+      setActivitiesLoading(false)
+    }
+  }
+
+  async function handleAddActivity(e){
+    e && e.preventDefault()
+    if (!newActivity.athlete_id || !newActivity.distance || !newActivity.start_date) {
+      return alert('Please fill in: Athlete ID, Distance, and Start Date')
+    }
+    
+    try{
+      const payload = {
+        athlete_id: newActivity.athlete_id,
+        athlete_name: newActivity.athlete_name || null,
+        distance: Number(newActivity.distance) || 0,
+        moving_time: Number(newActivity.moving_time) || 0,
+        start_date: newActivity.start_date,
+        type: newActivity.type || 'Run',
+        name: newActivity.name || 'Manual Activity',
+        elevation_gain: Number(newActivity.elevation_gain) || 0
+      }
+      
+      const res = await fetch(`${API}/admin/raw-activities`, {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify(payload)
+      })
+      
+      if (!res.ok) throw new Error('Failed to create activity')
+      
+      const result = await res.json()
+      alert('Activity added successfully!')
+      setShowAddActivity(false)
+      setNewActivity({ athlete_id: '', athlete_name: '', distance: '', moving_time: '', start_date: '', type: 'Run', name: '', elevation_gain: '' })
+      loadActivities()
+    }catch(e){
+      console.error('Failed to add activity', e)
+      alert('Error adding activity: ' + e.message)
+    }
+  }
+
+  async function handleDeleteActivity(id){
+    if (!confirm('Delete this activity?')) return
+    
+    try{
+      const res = await fetch(`${API}/admin/raw-activities/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed to delete')
+      
+      alert('Activity deleted')
+      loadActivities()
+    }catch(e){
+      console.error('Failed to delete activity', e)
+      alert('Error deleting activity: ' + e.message)
+    }
+  }
+
+  async function handleBulkImport(){
+    const csvText = prompt('Paste CSV data (format: athlete_id,athlete_name,distance,moving_time,start_date,type,name,elevation_gain)')
+    if (!csvText) return
+    
+    try{
+      const lines = csvText.trim().split('\n')
+      const activities = []
+      
+      for (let i = 0; i < lines.length; i++){
+        const line = lines[i].trim()
+        if (!line || line.startsWith('athlete_id')) continue // skip header
+        
+        const parts = line.split(',')
+        if (parts.length < 5) continue
+        
+        activities.push({
+          athlete_id: parts[0].trim(),
+          athlete_name: parts[1]?.trim() || '',
+          distance: Number(parts[2]) || 0,
+          moving_time: Number(parts[3]) || 0,
+          start_date: parts[4]?.trim() || '',
+          type: parts[5]?.trim() || 'Run',
+          name: parts[6]?.trim() || 'Imported Activity',
+          elevation_gain: Number(parts[7]) || 0
+        })
+      }
+      
+      if (activities.length === 0) return alert('No valid activities found in CSV')
+      
+      const res = await fetch(`${API}/admin/raw-activities/bulk`, {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({ activities })
+      })
+      
+      if (!res.ok) throw new Error('Bulk import failed')
+      
+      const result = await res.json()
+      alert(`Imported ${result.imported} activities!`)
+      loadActivities()
+    }catch(e){
+      console.error('Bulk import failed', e)
+      alert('Error importing: ' + e.message)
+    }
+  }
+
+  async function runAggregation(){
+    if (!confirm('Run aggregation to recalculate all summaries?')) return
+    
+    try{
+      const res = await fetch(`${API}/aggregate/weekly`, { method: 'POST' })
+      if (!res.ok) throw new Error('Aggregation failed')
+      
+      const result = await res.json()
+      alert(`Aggregation complete! Processed ${result.results?.length || 0} athletes`)
+    }catch(e){
+      console.error('Aggregation failed', e)
+      alert('Error: ' + e.message)
+    }
+  }
+
+
   return (
     <div className="admin-page admin-card">
       {!authed && (
@@ -261,39 +412,256 @@ export default function Admin(){
       {authed && (
         <>
           <header className="admin-header">
-            <h2 style={{margin:0}}>AAC Admin — Members</h2>
+            <h2 style={{margin:0}}>AAC Admin</h2>
             <div className="header-actions">
               <a className="btn btn-ghost" href="/">Back to main</a>
               <a className="btn btn-ghost" href="/connect.html" target="_blank" rel="noopener noreferrer" style={{marginLeft:8}}>Connect</a>
-              <button className="btn btn-ghost" onClick={load} style={{marginLeft:8}}>Reload</button>
+              <button className="btn btn-ghost" onClick={activeTab === 'members' ? load : loadActivities} style={{marginLeft:8}}>Reload</button>
             </div>
           </header>
 
-          <main style={{marginTop:20}}>
-            {loading && <div className="loading">Loading…</div>}
-            {!loading && rows.length===0 && <div className="empty">No athletes found</div>}
-
-            {!loading && (
-              <div className="admin-table-wrap compact">
-                <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8,marginTop:16,gap:8}}>
-                  <input placeholder="Search members" value={search} onChange={e=>setSearch(e.target.value)} className="search-small" />
-                </div>
-                <CompactTable
-                  columns={ADMIN_COLUMNS}
-                  data={data}
-                  theme={theme}
-                  sort={sort}
-                />
-                {filtered.length === 0 && <div className="no-results-row">No matching members</div>}
-              </div>
-            )}
-          </main>
-          <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:12}}>
-            <button className="save-all" onClick={saveAll} disabled={savingAll}>{savingAll ? 'Saving…' : 'Save All'}</button>
+          {/* Tabs */}
+          <div style={{display:'flex',gap:16,marginTop:20,borderBottom:'1px solid #e2e8f0'}}>
+            <button 
+              className={`tab-button ${activeTab === 'members' ? 'active' : ''}`}
+              onClick={() => setActiveTab('members')}
+              style={{
+                padding:'12px 24px',
+                background:'none',
+                border:'none',
+                borderBottom: activeTab === 'members' ? '2px solid #2563eb' : '2px solid transparent',
+                color: activeTab === 'members' ? '#2563eb' : '#64748b',
+                fontWeight: activeTab === 'members' ? 600 : 400,
+                cursor:'pointer'
+              }}
+            >
+              Members
+            </button>
+            <button 
+              className={`tab-button ${activeTab === 'activities' ? 'active' : ''}`}
+              onClick={() => setActiveTab('activities')}
+              style={{
+                padding:'12px 24px',
+                background:'none',
+                border:'none',
+                borderBottom: activeTab === 'activities' ? '2px solid #2563eb' : '2px solid transparent',
+                color: activeTab === 'activities' ? '#2563eb' : '#64748b',
+                fontWeight: activeTab === 'activities' ? 600 : 400,
+                cursor:'pointer'
+              }}
+            >
+              Activities ({activities.length})
+            </button>
           </div>
-          {(loading || savingAll) && (
+
+          {/* Members Tab */}
+          {activeTab === 'members' && (
+            <main style={{marginTop:20}}>
+              {loading && <div className="loading">Loading…</div>}
+              {!loading && rows.length===0 && <div className="empty">No athletes found</div>}
+
+              {!loading && (
+                <div className="admin-table-wrap compact">
+                  <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8,marginTop:16,gap:8}}>
+                    <input placeholder="Search members" value={search} onChange={e=>setSearch(e.target.value)} className="search-small" />
+                  </div>
+                  <CompactTable
+                    columns={ADMIN_COLUMNS}
+                    data={data}
+                    theme={theme}
+                    sort={sort}
+                  />
+                  {filtered.length === 0 && <div className="no-results-row">No matching members</div>}
+                </div>
+              )}
+              <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:12}}>
+                <button className="save-all" onClick={saveAll} disabled={savingAll}>{savingAll ? 'Saving…' : 'Save All'}</button>
+              </div>
+            </main>
+          )}
+
+          {/* Activities Tab */}
+          {activeTab === 'activities' && (
+            <main style={{marginTop:20}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+                <h3 style={{margin:0}}>Activity Records</h3>
+                <div style={{display:'flex',gap:8}}>
+                  <button className="btn" onClick={() => setShowAddActivity(!showAddActivity)}>
+                    {showAddActivity ? 'Cancel' : '+ Add Activity'}
+                  </button>
+                  <button className="btn btn-ghost" onClick={handleBulkImport}>Import CSV</button>
+                  <button className="btn btn-ghost" onClick={runAggregation}>Run Aggregation</button>
+                </div>
+              </div>
+
+              {/* Add Activity Form */}
+              {showAddActivity && (
+                <div style={{background:'#f8fafc',padding:16,borderRadius:8,marginBottom:16}}>
+                  <h4 style={{marginTop:0}}>Add Manual Activity</h4>
+                  <form onSubmit={handleAddActivity} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                    <div>
+                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Athlete ID *</label>
+                      <input 
+                        className="admin-input" 
+                        value={newActivity.athlete_id} 
+                        onChange={e => setNewActivity({...newActivity, athlete_id: e.target.value})}
+                        placeholder="e.g., 12345678"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Athlete Name</label>
+                      <input 
+                        className="admin-input" 
+                        value={newActivity.athlete_name} 
+                        onChange={e => setNewActivity({...newActivity, athlete_name: e.target.value})}
+                        placeholder="e.g., John Doe"
+                      />
+                    </div>
+                    <div>
+                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Distance (meters) *</label>
+                      <input 
+                        type="number" 
+                        className="admin-input" 
+                        value={newActivity.distance} 
+                        onChange={e => setNewActivity({...newActivity, distance: e.target.value})}
+                        placeholder="e.g., 5000"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Moving Time (seconds)</label>
+                      <input 
+                        type="number" 
+                        className="admin-input" 
+                        value={newActivity.moving_time} 
+                        onChange={e => setNewActivity({...newActivity, moving_time: e.target.value})}
+                        placeholder="e.g., 1800"
+                      />
+                    </div>
+                    <div>
+                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Start Date *</label>
+                      <input 
+                        type="date" 
+                        className="admin-input" 
+                        value={newActivity.start_date} 
+                        onChange={e => setNewActivity({...newActivity, start_date: e.target.value})}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Type</label>
+                      <select 
+                        className="admin-input" 
+                        value={newActivity.type} 
+                        onChange={e => setNewActivity({...newActivity, type: e.target.value})}
+                      >
+                        <option>Run</option>
+                        <option>Walk</option>
+                        <option>Hike</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Activity Name</label>
+                      <input 
+                        className="admin-input" 
+                        value={newActivity.name} 
+                        onChange={e => setNewActivity({...newActivity, name: e.target.value})}
+                        placeholder="e.g., Morning Run"
+                      />
+                    </div>
+                    <div>
+                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Elevation Gain (m)</label>
+                      <input 
+                        type="number" 
+                        className="admin-input" 
+                        value={newActivity.elevation_gain} 
+                        onChange={e => setNewActivity({...newActivity, elevation_gain: e.target.value})}
+                        placeholder="e.g., 100"
+                      />
+                    </div>
+                    <div style={{gridColumn:'1 / -1',display:'flex',gap:8,justifyContent:'flex-end'}}>
+                      <button type="button" className="btn btn-ghost" onClick={() => setShowAddActivity(false)}>Cancel</button>
+                      <button type="submit" className="btn">Add Activity</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {/* Activities List */}
+              {activitiesLoading && <div className="loading">Loading activities…</div>}
+              {!activitiesLoading && activities.length === 0 && <div className="empty">No activities found</div>}
+              
+              {!activitiesLoading && activities.length > 0 && (
+                <div style={{overflowX:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:14}}>
+                    <thead>
+                      <tr style={{borderBottom:'2px solid #e2e8f0',textAlign:'left'}}>
+                        <th style={{padding:12}}>Date</th>
+                        <th style={{padding:12}}>Athlete</th>
+                        <th style={{padding:12}}>Name</th>
+                        <th style={{padding:12}}>Distance</th>
+                        <th style={{padding:12}}>Time</th>
+                        <th style={{padding:12}}>Type</th>
+                        <th style={{padding:12}}>Source</th>
+                        <th style={{padding:12}}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activities.map(act => (
+                        <tr key={act.id} style={{borderBottom:'1px solid #e2e8f0'}}>
+                          <td style={{padding:12}}>{act.start_date ? new Date(act.start_date).toLocaleDateString() : '-'}</td>
+                          <td style={{padding:12}}>{act.athlete_name || act.athlete_id}</td>
+                          <td style={{padding:12}}>{act.name || '-'}</td>
+                          <td style={{padding:12}}>{((act.distance || 0) / 1000).toFixed(2)} km</td>
+                          <td style={{padding:12}}>{act.moving_time ? Math.floor(act.moving_time / 60) + ' min' : '-'}</td>
+                          <td style={{padding:12}}>{act.type || 'Run'}</td>
+                          <td style={{padding:12}}>
+                            <span style={{
+                              fontSize:11,
+                              padding:'2px 6px',
+                              borderRadius:4,
+                              background: act.source === 'manual' ? '#fef3c7' : act.source === 'strava_api' ? '#dbeafe' : '#f1f5f9',
+                              color: act.source === 'manual' ? '#92400e' : act.source === 'strava_api' ? '#1e40af' : '#475569'
+                            }}>
+                              {act.source || 'unknown'}
+                            </span>
+                          </td>
+                          <td style={{padding:12}}>
+                            {act.source === 'manual' && (
+                              <button 
+                                onClick={() => handleDeleteActivity(act.id)} 
+                                style={{
+                                  background:'#fee2e2',
+                                  color:'#991b1b',
+                                  border:'none',
+                                  padding:'4px 12px',
+                                  borderRadius:4,
+                                  fontSize:12,
+                                  cursor:'pointer'
+                                }}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </main>
+          )}
+
+          {(loading || savingAll || activitiesLoading) && (
             <div className="page-loader">
-              <div className="loader-box"><div className="spinner"/> <div>{savingAll ? 'Saving changes…' : 'Loading members…'}</div></div>
+              <div className="loader-box">
+                <div className="spinner"/> 
+                <div>
+                  {savingAll ? 'Saving changes…' : activitiesLoading ? 'Loading activities…' : 'Loading members…'}
+                </div>
+              </div>
             </div>
           )}
         </>
