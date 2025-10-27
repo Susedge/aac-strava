@@ -10,7 +10,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: AGGREGATION_START_DATE
-        value: "2025-09-12"
+        value: "2025-09-13"
       - key: AGGREGATION_TIMEZONE
         value: "Asia/Manila"
     healthCheckPath: /health

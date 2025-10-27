@@ -628,6 +628,7 @@ app.post('/admin/refresh', async (req, res) => {
 });
 
 // Debug: fetch raw club activities (requires STRAVA_ADMIN_TOKEN)
+// Fetches ALL club activities without any date filtering or limits
 app.get('/debug/club-activities', async (req, res) => {
   let clubId = process.env.STRAVA_CLUB_ID || null;
   let token = process.env.STRAVA_ADMIN_TOKEN || null;
@@ -644,26 +645,15 @@ app.get('/debug/club-activities', async (req, res) => {
   if (!clubId) return res.status(400).json({ error: 'STRAVA_CLUB_ID not set' });
   if (!token) return res.status(400).json({ error: 'STRAVA_ADMIN_TOKEN not set' });
   try {
-    // Allow overriding the debug start date via query ?start_date=YYYY-MM-DD or env AGGREGATION_START_DATE
-    const qDate = req.query && req.query.start_date ? String(req.query.start_date) : null;
-    const envDate = process.env.AGGREGATION_START_DATE || null;
-    const startDateStr = qDate || envDate || null;
-    let oneWeekAgo;
-    if (startDateStr) {
-      const parsedMs = parseDateWithTZ(startDateStr, process.env.AGGREGATION_TIMEZONE || 'Asia/Manila');
-      oneWeekAgo = Number.isNaN(parsedMs) ? Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60 : Math.floor(parsedMs / 1000);
-    } else {
-      oneWeekAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
-    }
-    console.log(`Debug: Fetching club activities after timestamp ${oneWeekAgo} (${new Date(oneWeekAgo * 1000).toISOString()}) for club ${clubId}`);
+    console.log(`Debug: Fetching ALL club activities (no date filter) for club ${clubId}`);
     
-    // Paginate through all activities (not just first page)
+    // Paginate through all activities with NO date filtering
     const perPage = 200;
     let page = 1;
     let allActivities = [];
     while (true) {
       const r = await axios.get(`https://www.strava.com/api/v3/clubs/${clubId}/activities`, {
-        params: { after: oneWeekAgo, per_page: perPage, page },
+        params: { per_page: perPage, page }, // No 'after' parameter = get all activities
         headers: { Authorization: `Bearer ${token}` }
       });
       const chunk = r.data || [];
@@ -671,9 +661,15 @@ app.get('/debug/club-activities', async (req, res) => {
       console.log(`Debug: Fetched page ${page}, got ${chunk.length} activities (total so far: ${allActivities.length})`);
       if (chunk.length < perPage) break; // Stop when no more activities available
       page += 1;
+      
+      // Safety limit to prevent infinite loops or excessive API calls (max 50 pages = 10,000 activities)
+      if (page > 50) {
+        console.warn(`Debug: Hit safety limit of 50 pages (10,000 activities)`);
+        break;
+      }
     }
     console.log(`Debug: Total activities fetched: ${allActivities.length} across ${page} pages`);
-    res.json({ ok: true, activities: allActivities, count: allActivities.length, pages: page, after_timestamp: oneWeekAgo, after_date: new Date(oneWeekAgo * 1000).toISOString() });
+    res.json({ ok: true, activities: allActivities, count: allActivities.length, pages: page, note: 'All club activities (no date filter)' });
   } catch (err) {
     console.error('debug club fetch failed', err.response ? err.response.data : err.message);
     res.status(500).json({ error: 'failed to fetch club activities' });
