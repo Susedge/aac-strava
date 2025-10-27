@@ -735,7 +735,7 @@ app.get('/debug/club-members', async (req, res) => {
       });
       const chunk = r.data || [];
       members.push(...chunk);
-      if (chunk.length < perPage || page >= 10) break;
+      if (chunk.length < perPage) break;
       page += 1;
     }
     res.json({ ok: true, members, count: members.length });

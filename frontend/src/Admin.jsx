@@ -3,7 +3,7 @@ import { CompactTable } from '@table-library/react-table-library/compact'
 import { useTheme } from '@table-library/react-table-library/theme'
 import { useSort } from '@table-library/react-table-library/sort'
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
+const API = import.meta.env.VITE_API_BASE || 'https://aac-strava-backend.onrender.com'
 
 export default function Admin(){
   const [search, setSearch] = useState('')
