@@ -676,6 +676,87 @@ app.get('/debug/club-activities', async (req, res) => {
   }
 });
 
+// Debug: fetch club activities with date range support
+// Use ?start_date=YYYY-MM-DD to fetch activities from that date forward
+// Use ?before=YYYY-MM-DD to fetch activities before that date (for historical data)
+app.get('/debug/club-activities-range', async (req, res) => {
+  let clubId = process.env.STRAVA_CLUB_ID || null;
+  let token = process.env.STRAVA_ADMIN_TOKEN || null;
+  if ((!clubId || !token) && db) {
+    try {
+      const doc = await db.collection('admin').doc('strava').get();
+      if (doc.exists) {
+        const d = doc.data();
+        clubId = clubId || d && (d.club_id || d.clubId) || null;
+        token = token || (d && d.access_token) || null;
+      }
+    } catch (e) { console.warn('failed reading admin/strava doc', e.message || e); }
+  }
+  if (!clubId) return res.status(400).json({ error: 'STRAVA_CLUB_ID not set' });
+  if (!token) return res.status(400).json({ error: 'STRAVA_ADMIN_TOKEN not set' });
+  
+  try {
+    const startDateStr = req.query && req.query.start_date ? String(req.query.start_date) : '2025-09-13';
+    const beforeDateStr = req.query && req.query.before ? String(req.query.before) : null;
+    
+    let afterTimestamp = null;
+    let beforeTimestamp = null;
+    
+    if (startDateStr) {
+      const parsedMs = parseDateWithTZ(startDateStr, 'Asia/Manila');
+      afterTimestamp = Number.isNaN(parsedMs) ? null : Math.floor(parsedMs / 1000);
+    }
+    
+    if (beforeDateStr) {
+      const parsedMs = parseDateWithTZ(beforeDateStr, 'Asia/Manila');
+      beforeTimestamp = Number.isNaN(parsedMs) ? null : Math.floor(parsedMs / 1000);
+    }
+    
+    console.log(`Debug: Fetching club activities - after: ${afterTimestamp ? new Date(afterTimestamp * 1000).toISOString() : 'none'}, before: ${beforeTimestamp ? new Date(beforeTimestamp * 1000).toISOString() : 'none'}`);
+    
+    const perPage = 200;
+    let page = 1;
+    let allActivities = [];
+    
+    while (true) {
+      const params = { per_page: perPage, page };
+      if (afterTimestamp) params.after = afterTimestamp;
+      if (beforeTimestamp) params.before = beforeTimestamp;
+      
+      const r = await axios.get(`https://www.strava.com/api/v3/clubs/${clubId}/activities`, {
+        params,
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const chunk = r.data || [];
+      allActivities = allActivities.concat(chunk);
+      console.log(`Debug: Fetched page ${page}, got ${chunk.length} activities (total so far: ${allActivities.length})`);
+      
+      if (chunk.length < perPage) break;
+      page += 1;
+      
+      if (page > 100) {
+        console.warn(`Debug: Hit safety limit of 100 pages`);
+        break;
+      }
+    }
+    
+    console.log(`Debug: Total activities fetched: ${allActivities.length} across ${page} pages`);
+    res.json({ 
+      ok: true, 
+      activities: allActivities, 
+      count: allActivities.length, 
+      pages: page,
+      filters: {
+        after: afterTimestamp ? new Date(afterTimestamp * 1000).toISOString() : null,
+        before: beforeTimestamp ? new Date(beforeTimestamp * 1000).toISOString() : null
+      }
+    });
+  } catch (err) {
+    console.error('debug club activities range failed', err.response ? err.response.data : err.message);
+    res.status(500).json({ error: 'failed to fetch club activities' });
+  }
+});
+
 // Debug: list persisted activities docs
 app.get('/debug/activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
