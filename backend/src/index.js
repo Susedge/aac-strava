@@ -961,8 +961,17 @@ app.get('/admin/raw-activities', async (req, res) => {
       query = query.where('athlete_id', '==', athleteId);
     }
     
-    const snaps = await query.orderBy('start_date', 'desc').limit(500).get();
+    // Remove orderBy to avoid index requirement - sort client-side instead
+    const snaps = await query.limit(500).get();
     const activities = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
+    
+    // Sort by start_date descending in-memory
+    activities.sort((a, b) => {
+      const dateA = a.start_date ? new Date(a.start_date).getTime() : 0;
+      const dateB = b.start_date ? new Date(b.start_date).getTime() : 0;
+      return dateB - dateA; // descending
+    });
+    
     res.json({ ok: true, activities, count: activities.length });
   } catch (e) {
     console.error('Failed to list raw activities', e);
@@ -970,19 +979,45 @@ app.get('/admin/raw-activities', async (req, res) => {
   }
 });
 
-// Admin: Add a new manual activity
+// Admin: Add a new manual activity (using athlete name)
 app.post('/admin/raw-activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
   try {
-    const { athlete_id, athlete_name, distance, moving_time, start_date, type, name, elevation_gain } = req.body || {};
+    const { athlete_name, distance, moving_time, start_date, type, name, elevation_gain } = req.body || {};
     
-    if (!athlete_id) return res.status(400).json({ error: 'athlete_id required' });
+    if (!athlete_name) return res.status(400).json({ error: 'athlete_name required' });
     if (!distance && distance !== 0) return res.status(400).json({ error: 'distance required' });
     if (!start_date) return res.status(400).json({ error: 'start_date required (YYYY-MM-DD or ISO)' });
     
+    // Find athlete ID by name from summary_athletes or activities collection
+    let athlete_id = null;
+    try {
+      // Try to find by nickname first
+      const athleteSnap = await db.collection('summary_athletes')
+        .where('nickname', '==', athlete_name)
+        .limit(1)
+        .get();
+      
+      if (!athleteSnap.empty) {
+        athlete_id = athleteSnap.docs[0].id;
+      } else {
+        // Try by name
+        const nameSnap = await db.collection('summary_athletes')
+          .where('name', '==', athlete_name)
+          .limit(1)
+          .get();
+        
+        if (!nameSnap.empty) {
+          athlete_id = nameSnap.docs[0].id;
+        }
+      }
+    } catch (lookupErr) {
+      console.warn('Failed to lookup athlete by name', lookupErr);
+    }
+    
     const activity = {
-      athlete_id: String(athlete_id),
-      athlete_name: athlete_name || null,
+      athlete_id: athlete_id, // Can be null if not found
+      athlete_name: athlete_name,
       distance: Number(distance) || 0,
       moving_time: Number(moving_time) || 0,
       start_date: start_date,
@@ -995,7 +1030,7 @@ app.post('/admin/raw-activities', async (req, res) => {
     };
     
     const docRef = await db.collection('raw_activities').add(activity);
-    console.log(`Created manual activity ${docRef.id} for athlete ${athlete_id}`);
+    console.log(`Created manual activity ${docRef.id} for athlete ${athlete_name} (ID: ${athlete_id || 'unknown'})`);
     
     res.json({ ok: true, activity: { id: docRef.id, ...activity } });
   } catch (e) {
@@ -1057,18 +1092,34 @@ app.post('/admin/raw-activities/bulk', async (req, res) => {
     const { activities } = req.body || {};
     if (!Array.isArray(activities)) return res.status(400).json({ error: 'activities array required' });
     
+    // Load all athletes for name lookup
+    const athletesSnap = await db.collection('summary_athletes').get();
+    const athletesByName = new Map();
+    const athletesByNickname = new Map();
+    
+    athletesSnap.docs.forEach(doc => {
+      const data = doc.data();
+      if (data.name) athletesByName.set(data.name.toLowerCase(), doc.id);
+      if (data.nickname) athletesByNickname.set(data.nickname.toLowerCase(), doc.id);
+    });
+    
     const batch = db.batch();
     const created = [];
+    const errors = [];
     
     for (const act of activities) {
-      if (!act.athlete_id || (!act.distance && act.distance !== 0) || !act.start_date) {
-        console.warn('Skipping invalid activity', act);
+      if (!act.athlete_name || (!act.distance && act.distance !== 0) || !act.start_date) {
+        errors.push({ activity: act, error: 'Missing required fields: athlete_name, distance, start_date' });
         continue;
       }
       
+      // Lookup athlete ID by name
+      const nameLower = String(act.athlete_name).toLowerCase();
+      let athlete_id = athletesByNickname.get(nameLower) || athletesByName.get(nameLower) || null;
+      
       const activity = {
-        athlete_id: String(act.athlete_id),
-        athlete_name: act.athlete_name || null,
+        athlete_id: athlete_id,
+        athlete_name: act.athlete_name,
         distance: Number(act.distance) || 0,
         moving_time: Number(act.moving_time) || 0,
         start_date: act.start_date,
@@ -1086,8 +1137,8 @@ app.post('/admin/raw-activities/bulk', async (req, res) => {
     }
     
     await batch.commit();
-    console.log(`Bulk imported ${created.length} activities`);
-    res.json({ ok: true, imported: created.length, activities: created });
+    console.log(`Bulk imported ${created.length} activities (${errors.length} errors)`);
+    res.json({ ok: true, imported: created.length, activities: created, errors });
   } catch (e) {
     console.error('Failed to bulk import', e);
     res.status(500).json({ error: e.message || String(e) });
@@ -1101,13 +1152,12 @@ app.get('/admin/export-csv-template', async (req, res) => {
     const snaps = await db.collection('summary_athletes').orderBy('name').get();
     const athletes = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
     
-    let csv = 'athlete_id,athlete_name,distance,moving_time,start_date,type,name,elevation_gain\n';
+    let csv = 'athlete_name,distance,moving_time,start_date,type,name,elevation_gain\n';
     
     athletes.forEach(athlete => {
-      const id = athlete.id;
-      const name = (athlete.name || athlete.nickname || 'Unknown').replace(/,/g, ' ');
+      const name = (athlete.nickname || athlete.name || 'Unknown').replace(/,/g, ' ');
       // Template with example values
-      csv += `${id},${name},5000,1800,2025-09-13,Run,September Activity,100\n`;
+      csv += `${name},5000,1800,2025-09-13,Run,September Activity,100\n`;
     });
     
     res.setHeader('Content-Type', 'text/csv');

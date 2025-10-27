@@ -24,7 +24,6 @@ export default function Admin(){
   const [activitiesLoading, setActivitiesLoading] = useState(false)
   const [showAddActivity, setShowAddActivity] = useState(false)
   const [newActivity, setNewActivity] = useState({
-    athlete_id: '',
     athlete_name: '',
     distance: '',
     moving_time: '',
@@ -33,6 +32,7 @@ export default function Admin(){
     name: '',
     elevation_gain: ''
   })
+  const [athleteNames, setAthleteNames] = useState([]) // For dropdown
 
   useEffect(()=>{
     const ok = sessionStorage.getItem('aac_admin_authed') === '1'
@@ -85,6 +85,11 @@ export default function Admin(){
       }
 
         setRows(normalized)
+        
+        // Build athlete names list for dropdown (prefer nickname, fallback to name)
+        const names = normalized.map(r => r.nickname || r.name).filter(Boolean).sort()
+        setAthleteNames(names)
+        
         // reset editing state
         const map = {}
         const goalMap = {}
@@ -278,14 +283,13 @@ export default function Admin(){
 
   async function handleAddActivity(e){
     e && e.preventDefault()
-    if (!newActivity.athlete_id || !newActivity.distance || !newActivity.start_date) {
-      return alert('Please fill in: Athlete ID, Distance, and Start Date')
+    if (!newActivity.athlete_name || !newActivity.distance || !newActivity.start_date) {
+      return alert('Please fill in: Athlete Name, Distance, and Start Date')
     }
     
     try{
       const payload = {
-        athlete_id: newActivity.athlete_id,
-        athlete_name: newActivity.athlete_name || null,
+        athlete_name: newActivity.athlete_name,
         distance: Number(newActivity.distance) || 0,
         moving_time: Number(newActivity.moving_time) || 0,
         start_date: newActivity.start_date,
@@ -305,7 +309,7 @@ export default function Admin(){
       const result = await res.json()
       alert('Activity added successfully!')
       setShowAddActivity(false)
-      setNewActivity({ athlete_id: '', athlete_name: '', distance: '', moving_time: '', start_date: '', type: 'Run', name: '', elevation_gain: '' })
+      setNewActivity({ athlete_name: '', distance: '', moving_time: '', start_date: '', type: 'Run', name: '', elevation_gain: '' })
       loadActivities()
     }catch(e){
       console.error('Failed to add activity', e)
@@ -329,7 +333,7 @@ export default function Admin(){
   }
 
   async function handleBulkImport(){
-    const csvText = prompt('Paste CSV data (format: athlete_id,athlete_name,distance,moving_time,start_date,type,name,elevation_gain)')
+    const csvText = prompt('Paste CSV data (format: athlete_name,distance,moving_time,start_date,type,name,elevation_gain)')
     if (!csvText) return
     
     try{
@@ -338,20 +342,19 @@ export default function Admin(){
       
       for (let i = 0; i < lines.length; i++){
         const line = lines[i].trim()
-        if (!line || line.startsWith('athlete_id')) continue // skip header
+        if (!line || line.startsWith('athlete_name')) continue // skip header
         
         const parts = line.split(',')
-        if (parts.length < 5) continue
+        if (parts.length < 4) continue
         
         activities.push({
-          athlete_id: parts[0].trim(),
-          athlete_name: parts[1]?.trim() || '',
-          distance: Number(parts[2]) || 0,
-          moving_time: Number(parts[3]) || 0,
-          start_date: parts[4]?.trim() || '',
-          type: parts[5]?.trim() || 'Run',
-          name: parts[6]?.trim() || 'Imported Activity',
-          elevation_gain: Number(parts[7]) || 0
+          athlete_name: parts[0].trim(),
+          distance: Number(parts[1]) || 0,
+          moving_time: Number(parts[2]) || 0,
+          start_date: parts[3]?.trim() || '',
+          type: parts[4]?.trim() || 'Run',
+          name: parts[5]?.trim() || 'Imported Activity',
+          elevation_gain: Number(parts[6]) || 0
         })
       }
       
@@ -366,7 +369,7 @@ export default function Admin(){
       if (!res.ok) throw new Error('Bulk import failed')
       
       const result = await res.json()
-      alert(`Imported ${result.imported} activities!`)
+      alert(`Imported ${result.imported} activities!${result.errors?.length ? ` (${result.errors.length} errors)` : ''}`)
       loadActivities()
     }catch(e){
       console.error('Bulk import failed', e)
@@ -500,21 +503,25 @@ export default function Admin(){
                   <h4 style={{marginTop:0}}>Add Manual Activity</h4>
                   <form onSubmit={handleAddActivity} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
                     <div>
-                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Athlete ID *</label>
-                      <input 
-                        className="admin-input" 
-                        value={newActivity.athlete_id} 
-                        onChange={e => setNewActivity({...newActivity, athlete_id: e.target.value})}
-                        placeholder="e.g., 12345678"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Athlete Name</label>
-                      <input 
+                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Athlete Name *</label>
+                      <select 
                         className="admin-input" 
                         value={newActivity.athlete_name} 
                         onChange={e => setNewActivity({...newActivity, athlete_name: e.target.value})}
+                        required
+                      >
+                        <option value="">Select Athlete</option>
+                        {athleteNames.map(name => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{display:'block',fontSize:12,marginBottom:4}}>Activity Name</label>
+                      <input 
+                        className="admin-input" 
+                        value={newActivity.name} 
+                        onChange={e => setNewActivity({...newActivity, name: e.target.value})}
                         placeholder="e.g., John Doe"
                       />
                     </div>
