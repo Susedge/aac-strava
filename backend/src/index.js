@@ -426,9 +426,10 @@ app.post('/aggregate/weekly', async (req, res) => {
             });
             const chunk = r.data || [];
             members.push(...chunk);
-            if (chunk.length < perPage || page >= 10) break; // safety cap 10 pages for members
+            if (chunk.length < perPage) break; // Stop when no more members available
             page += 1;
           }
+          console.log(`Fetched ${members.length} total club members across ${page} pages`);
         } catch (memErr) {
           console.warn('failed fetching club members', memErr.response ? memErr.response.data : memErr.message);
         }
@@ -444,9 +445,10 @@ app.post('/aggregate/weekly', async (req, res) => {
           });
           const chunk = r.data || [];
           acts = acts.concat(chunk);
-          if (chunk.length < perPage || page >= 5) break; // safety cap 5 pages
+          if (chunk.length < perPage) break; // Stop when no more activities available
           page += 1;
         }
+        console.log(`Fetched ${acts.length} total club activities across ${page} pages`);
 
         // Aggregate activities by a robust athlete key (id preferred, fallback to username or name)
         const agg = new Map();
