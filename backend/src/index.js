@@ -655,11 +655,25 @@ app.get('/debug/club-activities', async (req, res) => {
     } else {
       oneWeekAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
     }
-    const r = await axios.get(`https://www.strava.com/api/v3/clubs/${clubId}/activities`, {
-      params: { after: oneWeekAgo, per_page: 200 },
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    res.json({ ok: true, activities: r.data });
+    console.log(`Debug: Fetching club activities after timestamp ${oneWeekAgo} (${new Date(oneWeekAgo * 1000).toISOString()}) for club ${clubId}`);
+    
+    // Paginate through all activities (not just first page)
+    const perPage = 200;
+    let page = 1;
+    let allActivities = [];
+    while (true) {
+      const r = await axios.get(`https://www.strava.com/api/v3/clubs/${clubId}/activities`, {
+        params: { after: oneWeekAgo, per_page: perPage, page },
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const chunk = r.data || [];
+      allActivities = allActivities.concat(chunk);
+      console.log(`Debug: Fetched page ${page}, got ${chunk.length} activities (total so far: ${allActivities.length})`);
+      if (chunk.length < perPage) break; // Stop when no more activities available
+      page += 1;
+    }
+    console.log(`Debug: Total activities fetched: ${allActivities.length} across ${page} pages`);
+    res.json({ ok: true, activities: allActivities, count: allActivities.length, pages: page, after_timestamp: oneWeekAgo, after_date: new Date(oneWeekAgo * 1000).toISOString() });
   } catch (err) {
     console.error('debug club fetch failed', err.response ? err.response.data : err.message);
     res.status(500).json({ error: 'failed to fetch club activities' });
