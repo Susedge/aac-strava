@@ -458,17 +458,22 @@ app.post('/aggregate/weekly', async (req, res) => {
             const batch = db.batch();
             let storedCount = 0;
             for (const act of acts) {
-              if (!act.id) {
-                console.log('Skipping activity without ID:', act);
-                continue;
-              }
+              // Club activities don't have individual activity IDs
+              // Create a unique ID based on athlete + date + distance
+              const athleteName = act.athlete ? `${act.athlete.firstname || ''} ${act.athlete.lastname || ''}`.trim() : 'unknown';
+              const athleteId = act.athlete && act.athlete.id ? String(act.athlete.id) : null;
+              const startDate = act.start_date || new Date().toISOString();
+              const distance = Number(act.distance || 0);
+              
+              // Generate a unique document ID (hash-like identifier)
+              const uniqueId = `${athleteId || athleteName}_${startDate}_${distance}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+              
               const activityDoc = {
-                strava_id: String(act.id),
-                athlete_id: act.athlete && act.athlete.id ? String(act.athlete.id) : null,
-                athlete_name: act.athlete ? `${act.athlete.firstname || ''} ${act.athlete.lastname || ''}`.trim() : null,
-                distance: Number(act.distance || 0),
+                athlete_id: athleteId,
+                athlete_name: athleteName,
+                distance: distance,
                 moving_time: Number(act.moving_time || 0),
-                start_date: act.start_date || null,
+                start_date: startDate,
                 type: act.type || 'Run',
                 name: act.name || 'Activity',
                 elevation_gain: Number(act.total_elevation_gain || act.elev_total || 0),
@@ -476,8 +481,9 @@ app.post('/aggregate/weekly', async (req, res) => {
                 fetched_at: Date.now(),
                 updated_at: Date.now()
               };
-              // Use strava_id as document ID to avoid duplicates
-              batch.set(db.collection('raw_activities').doc(`strava_${act.id}`), activityDoc, { merge: true });
+              
+              // Use generated ID to avoid duplicates
+              batch.set(db.collection('raw_activities').doc(uniqueId), activityDoc, { merge: true });
               storedCount++;
             }
             
@@ -485,7 +491,7 @@ app.post('/aggregate/weekly', async (req, res) => {
               await batch.commit();
               console.log(`Stored ${storedCount} activities in raw_activities collection`);
             } else {
-              console.log('No valid activities to store (all missing IDs)');
+              console.log('No valid activities to store');
             }
           }
         } catch (storeErr) {
