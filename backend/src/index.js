@@ -648,7 +648,7 @@ app.get('/debug/club-activities', async (req, res) => {
     console.log(`Debug: Fetching ALL club activities (no date filter) for club ${clubId}`);
     
     // Paginate through all activities with NO date filtering
-    const perPage = 200;
+    const perPage = 50;
     let page = 1;
     let allActivities = [];
     while (true) {
