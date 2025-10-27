@@ -182,7 +182,7 @@ async function persistAdminToken({ access_token, refresh_token, athlete_id, expi
 }
 
 // Simple health
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: Date.now() }));
 
 // Redirect legacy static user page requests to the SPA index so React handles the route
 app.get(['/user', '/user.html'], (req, res) => {
