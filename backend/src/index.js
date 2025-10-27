@@ -503,7 +503,7 @@ app.post('/aggregate/weekly', async (req, res) => {
         let manualActivities = [];
         try {
           const manualSnaps = await db.collection('raw_activities')
-            .where('source', '==', 'manual')
+            .where('source', 'in', ['manual', 'bulk_import'])
             .get();
           manualActivities = manualSnaps.docs.map(d => d.data());
           console.log(`Loaded ${manualActivities.length} manual activities from raw_activities`);
@@ -512,20 +512,29 @@ app.post('/aggregate/weekly', async (req, res) => {
         }
 
         // Combine Strava activities + manual activities
-        const allActivities = [...acts, ...manualActivities.map(ma => ({
-          id: ma.strava_id || `manual_${ma.athlete_id}_${ma.start_date}`,
-          athlete: { 
-            id: ma.athlete_id, 
-            firstname: (ma.athlete_name || '').split(' ')[0] || '',
-            lastname: (ma.athlete_name || '').split(' ').slice(1).join(' ') || ''
-          },
-          distance: ma.distance,
-          moving_time: ma.moving_time,
-          start_date: ma.start_date,
-          type: ma.type,
-          name: ma.name,
-          total_elevation_gain: ma.elevation_gain
-        }))];
+        const allActivities = [...acts, ...manualActivities.map(ma => {
+          const athleteId = ma.athlete_id;
+          const athleteName = ma.athlete_name || '';
+          
+          // Create athlete object that matches Strava format
+          return {
+            athlete: athleteId ? { 
+              id: athleteId,
+              firstname: athleteName.split(' ')[0] || '',
+              lastname: athleteName.split(' ').slice(1).join(' ') || ''
+            } : {
+              // No ID - will be matched by name
+              firstname: athleteName.split(' ')[0] || '',
+              lastname: athleteName.split(' ').slice(1).join(' ') || ''
+            },
+            distance: ma.distance,
+            moving_time: ma.moving_time,
+            start_date: ma.start_date,
+            type: ma.type,
+            name: ma.name,
+            total_elevation_gain: ma.elevation_gain
+          };
+        })];
         console.log(`Total activities (Strava + Manual): ${allActivities.length}`);
 
         // Aggregate activities by a robust athlete key (id preferred, fallback to username or name)
@@ -1011,24 +1020,24 @@ app.post('/admin/raw-activities', async (req, res) => {
     // Find athlete ID by name from summary_athletes or activities collection
     let athlete_id = null;
     try {
-      // Try to find by nickname first
-      const athleteSnap = await db.collection('summary_athletes')
-        .where('nickname', '==', athlete_name)
-        .limit(1)
-        .get();
+      // Try to find by nickname first (case-insensitive)
+      const allAthletes = await db.collection('summary_athletes').get();
+      const athleteName = String(athlete_name).toLowerCase().trim();
       
-      if (!athleteSnap.empty) {
-        athlete_id = athleteSnap.docs[0].id;
-      } else {
-        // Try by name
-        const nameSnap = await db.collection('summary_athletes')
-          .where('name', '==', athlete_name)
-          .limit(1)
-          .get();
+      for (const doc of allAthletes.docs) {
+        const data = doc.data();
+        const nickname = data.nickname ? String(data.nickname).toLowerCase().trim() : '';
+        const name = data.name ? String(data.name).toLowerCase().trim() : '';
         
-        if (!nameSnap.empty) {
-          athlete_id = nameSnap.docs[0].id;
+        if (nickname === athleteName || name === athleteName) {
+          athlete_id = doc.id;
+          console.log(`Matched athlete "${athlete_name}" to ID ${athlete_id} (nickname: ${data.nickname}, name: ${data.name})`);
+          break;
         }
+      }
+      
+      if (!athlete_id) {
+        console.warn(`Could not find athlete ID for "${athlete_name}"`);
       }
     } catch (lookupErr) {
       console.warn('Failed to lookup athlete by name', lookupErr);
