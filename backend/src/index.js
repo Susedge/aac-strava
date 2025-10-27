@@ -1019,25 +1019,29 @@ app.post('/admin/raw-activities', async (req, res) => {
     
     // Find athlete ID by name from summary_athletes or activities collection
     let athlete_id = null;
+    let matched_name = null;
     try {
       // Try to find by nickname first (case-insensitive)
       const allAthletes = await db.collection('summary_athletes').get();
-      const athleteName = String(athlete_name).toLowerCase().trim();
+      const searchName = String(athlete_name).toLowerCase().trim();
       
       for (const doc of allAthletes.docs) {
         const data = doc.data();
         const nickname = data.nickname ? String(data.nickname).toLowerCase().trim() : '';
         const name = data.name ? String(data.name).toLowerCase().trim() : '';
+        const username = data.username ? String(data.username).toLowerCase().trim() : '';
         
-        if (nickname === athleteName || name === athleteName) {
+        // Match against nickname, name, or username
+        if (nickname === searchName || name === searchName || username === searchName) {
           athlete_id = doc.id;
-          console.log(`Matched athlete "${athlete_name}" to ID ${athlete_id} (nickname: ${data.nickname}, name: ${data.name})`);
+          matched_name = data.nickname || data.name || data.username || athlete_name;
+          console.log(`Matched "${athlete_name}" to athlete ID ${athlete_id} (nickname: "${data.nickname}", name: "${data.name}")`);
           break;
         }
       }
       
       if (!athlete_id) {
-        console.warn(`Could not find athlete ID for "${athlete_name}"`);
+        console.warn(`Could not find athlete ID for "${athlete_name}" - will store without ID`);
       }
     } catch (lookupErr) {
       console.warn('Failed to lookup athlete by name', lookupErr);
@@ -1124,11 +1128,13 @@ app.post('/admin/raw-activities/bulk', async (req, res) => {
     const athletesSnap = await db.collection('summary_athletes').get();
     const athletesByName = new Map();
     const athletesByNickname = new Map();
+    const athletesByUsername = new Map();
     
     athletesSnap.docs.forEach(doc => {
       const data = doc.data();
-      if (data.name) athletesByName.set(data.name.toLowerCase(), doc.id);
-      if (data.nickname) athletesByNickname.set(data.nickname.toLowerCase(), doc.id);
+      if (data.name) athletesByName.set(data.name.toLowerCase().trim(), doc.id);
+      if (data.nickname) athletesByNickname.set(data.nickname.toLowerCase().trim(), doc.id);
+      if (data.username) athletesByUsername.set(data.username.toLowerCase().trim(), doc.id);
     });
     
     const batch = db.batch();
@@ -1141,9 +1147,9 @@ app.post('/admin/raw-activities/bulk', async (req, res) => {
         continue;
       }
       
-      // Lookup athlete ID by name
-      const nameLower = String(act.athlete_name).toLowerCase();
-      let athlete_id = athletesByNickname.get(nameLower) || athletesByName.get(nameLower) || null;
+      // Lookup athlete ID by name (try nickname first, then name, then username)
+      const nameLower = String(act.athlete_name).toLowerCase().trim();
+      let athlete_id = athletesByNickname.get(nameLower) || athletesByName.get(nameLower) || athletesByUsername.get(nameLower) || null;
       
       const activity = {
         athlete_id: athlete_id,
