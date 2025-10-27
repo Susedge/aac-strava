@@ -452,32 +452,45 @@ app.post('/aggregate/weekly', async (req, res) => {
 
         // Store each activity in raw_activities collection for data preservation
         try {
-          const batch = db.batch();
-          let storedCount = 0;
-          for (const act of acts) {
-            if (!act.id) continue; // Skip if no Strava activity ID
-            const activityDoc = {
-              strava_id: String(act.id),
-              athlete_id: act.athlete && act.athlete.id ? String(act.athlete.id) : null,
-              athlete_name: act.athlete ? `${act.athlete.firstname || ''} ${act.athlete.lastname || ''}`.trim() : null,
-              distance: Number(act.distance || 0),
-              moving_time: Number(act.moving_time || 0),
-              start_date: act.start_date || null,
-              type: act.type || 'Run',
-              name: act.name || 'Activity',
-              elevation_gain: Number(act.total_elevation_gain || act.elev_total || 0),
-              source: 'strava_api',
-              fetched_at: Date.now(),
-              updated_at: Date.now()
-            };
-            // Use strava_id as document ID to avoid duplicates
-            batch.set(db.collection('raw_activities').doc(`strava_${act.id}`), activityDoc, { merge: true });
-            storedCount++;
+          if (acts.length === 0) {
+            console.log('No activities to store - skipping batch commit');
+          } else {
+            const batch = db.batch();
+            let storedCount = 0;
+            for (const act of acts) {
+              if (!act.id) {
+                console.log('Skipping activity without ID:', act);
+                continue;
+              }
+              const activityDoc = {
+                strava_id: String(act.id),
+                athlete_id: act.athlete && act.athlete.id ? String(act.athlete.id) : null,
+                athlete_name: act.athlete ? `${act.athlete.firstname || ''} ${act.athlete.lastname || ''}`.trim() : null,
+                distance: Number(act.distance || 0),
+                moving_time: Number(act.moving_time || 0),
+                start_date: act.start_date || null,
+                type: act.type || 'Run',
+                name: act.name || 'Activity',
+                elevation_gain: Number(act.total_elevation_gain || act.elev_total || 0),
+                source: 'strava_api',
+                fetched_at: Date.now(),
+                updated_at: Date.now()
+              };
+              // Use strava_id as document ID to avoid duplicates
+              batch.set(db.collection('raw_activities').doc(`strava_${act.id}`), activityDoc, { merge: true });
+              storedCount++;
+            }
+            
+            if (storedCount > 0) {
+              await batch.commit();
+              console.log(`Stored ${storedCount} activities in raw_activities collection`);
+            } else {
+              console.log('No valid activities to store (all missing IDs)');
+            }
           }
-          await batch.commit();
-          console.log(`Stored ${storedCount} activities in raw_activities collection`);
         } catch (storeErr) {
-          console.warn('Failed to store raw activities', storeErr.message || storeErr);
+          console.error('Failed to store raw activities:', storeErr);
+          console.error('Error details:', storeErr.message || storeErr);
         }
 
         // Load manual activities from raw_activities collection
