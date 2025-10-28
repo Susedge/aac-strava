@@ -513,17 +513,11 @@ app.post('/aggregate/weekly', async (req, res) => {
 
         // Combine Strava activities + manual activities
         const allActivities = [...acts, ...manualActivities.map(ma => {
-          const athleteId = ma.athlete_id;
           const athleteName = ma.athlete_name || '';
           
-          // Create athlete object that matches Strava format
+          // Create athlete object that matches Strava format (name-based, no ID needed)
           return {
-            athlete: athleteId ? { 
-              id: athleteId,
-              firstname: athleteName.split(' ')[0] || '',
-              lastname: athleteName.split(' ').slice(1).join(' ') || ''
-            } : {
-              // No ID - will be matched by name
+            athlete: {
               firstname: athleteName.split(' ')[0] || '',
               lastname: athleteName.split(' ').slice(1).join(' ') || ''
             },
@@ -537,16 +531,17 @@ app.post('/aggregate/weekly', async (req, res) => {
         })];
         console.log(`Total activities (Strava + Manual): ${allActivities.length}`);
 
-        // Aggregate activities by a robust athlete key (id preferred, fallback to username or name)
+        // Aggregate activities by athlete name ONLY (since club activities don't have IDs)
         const agg = new Map();
         const makeAthleteKey = (a) => {
           if (!a) return null;
-          if (a.id) return String(a.id);
-          if (a.username) return `username:${a.username}`;
+          // Use name-based key since club activities don't have athlete IDs
           const fn = (a.firstname || '').trim();
           const ln = (a.lastname || '').trim();
-          if (fn || ln) return `name:${(fn + ' ' + ln).trim()}`;
-          if (a.resource_state && a.resource_state === 1 && a.id) return String(a.id);
+          const fullName = (fn + ' ' + ln).trim();
+          if (fullName) return `name:${fullName}`;
+          if (a.username) return `name:${a.username}`;
+          if (a.name) return `name:${a.name}`;
           return null;
         };
 
@@ -556,26 +551,8 @@ app.post('/aggregate/weekly', async (req, res) => {
             if (!Number.isNaN(ts) && ts / 1000 < oneWeekAgo) continue;
           }
           const key = makeAthleteKey(it.athlete) || null;
-          // If no identifiable athlete info, still try to use the activity 'athlete' name fields
-          if (!key) {
-            // some ClubActivity responses include athlete as minimal meta; try sport_type owner name fields
-            const altName = it.athlete && (it.athlete.username || (it.athlete.firstname || '') + ' ' + (it.athlete.lastname || ''));
-            if (altName) {
-              const k = `name:${String(altName).trim()}`;
-              const curA = agg.get(k) || { athlete: { name: altName }, distance: 0, count: 0, longest: 0, total_moving_time: 0, elev_gain: 0 };
-              const dist = Number(it.distance || 0);
-              const mt = Number(it.moving_time || 0);
-              const eg = Number(it.total_elevation_gain || it.elev_total || 0);
-              curA.distance += dist;
-              curA.count += 1;
-              curA.longest = Math.max(curA.longest || 0, dist);
-              curA.total_moving_time += mt;
-              curA.elev_gain += eg;
-              if (!curA.athlete && it.athlete) curA.athlete = it.athlete;
-              agg.set(k, curA);
-            }
-            continue;
-          }
+          if (!key) continue; // Skip activities without identifiable athlete
+          
           const cur = agg.get(key) || { athlete: it.athlete || null, distance: 0, count: 0, longest: 0, total_moving_time: 0, elev_gain: 0 };
           const dist = Number(it.distance || 0);
           const mt = Number(it.moving_time || 0);
@@ -1017,38 +994,9 @@ app.post('/admin/raw-activities', async (req, res) => {
     if (!distance && distance !== 0) return res.status(400).json({ error: 'distance required' });
     if (!start_date) return res.status(400).json({ error: 'start_date required (YYYY-MM-DD or ISO)' });
     
-    // Find athlete ID by name from summary_athletes or activities collection
-    let athlete_id = null;
-    let matched_name = null;
-    try {
-      // Try to find by nickname first (case-insensitive)
-      const allAthletes = await db.collection('summary_athletes').get();
-      const searchName = String(athlete_name).toLowerCase().trim();
-      
-      for (const doc of allAthletes.docs) {
-        const data = doc.data();
-        const nickname = data.nickname ? String(data.nickname).toLowerCase().trim() : '';
-        const name = data.name ? String(data.name).toLowerCase().trim() : '';
-        const username = data.username ? String(data.username).toLowerCase().trim() : '';
-        
-        // Match against nickname, name, or username
-        if (nickname === searchName || name === searchName || username === searchName) {
-          athlete_id = doc.id;
-          matched_name = data.nickname || data.name || data.username || athlete_name;
-          console.log(`Matched "${athlete_name}" to athlete ID ${athlete_id} (nickname: "${data.nickname}", name: "${data.name}")`);
-          break;
-        }
-      }
-      
-      if (!athlete_id) {
-        console.warn(`Could not find athlete ID for "${athlete_name}" - will store without ID`);
-      }
-    } catch (lookupErr) {
-      console.warn('Failed to lookup athlete by name', lookupErr);
-    }
-    
+    // No need to lookup athlete_id - we match purely by name
     const activity = {
-      athlete_id: athlete_id, // Can be null if not found
+      athlete_id: null, // Club activities don't have IDs
       athlete_name: athlete_name,
       distance: Number(distance) || 0,
       moving_time: Number(moving_time) || 0,
@@ -1062,7 +1010,7 @@ app.post('/admin/raw-activities', async (req, res) => {
     };
     
     const docRef = await db.collection('raw_activities').add(activity);
-    console.log(`Created manual activity ${docRef.id} for athlete ${athlete_name} (ID: ${athlete_id || 'unknown'})`);
+    console.log(`Created manual activity ${docRef.id} for athlete ${athlete_name}`);
     
     res.json({ ok: true, activity: { id: docRef.id, ...activity } });
   } catch (e) {
@@ -1124,19 +1072,6 @@ app.post('/admin/raw-activities/bulk', async (req, res) => {
     const { activities } = req.body || {};
     if (!Array.isArray(activities)) return res.status(400).json({ error: 'activities array required' });
     
-    // Load all athletes for name lookup
-    const athletesSnap = await db.collection('summary_athletes').get();
-    const athletesByName = new Map();
-    const athletesByNickname = new Map();
-    const athletesByUsername = new Map();
-    
-    athletesSnap.docs.forEach(doc => {
-      const data = doc.data();
-      if (data.name) athletesByName.set(data.name.toLowerCase().trim(), doc.id);
-      if (data.nickname) athletesByNickname.set(data.nickname.toLowerCase().trim(), doc.id);
-      if (data.username) athletesByUsername.set(data.username.toLowerCase().trim(), doc.id);
-    });
-    
     const batch = db.batch();
     const created = [];
     const errors = [];
@@ -1147,12 +1082,9 @@ app.post('/admin/raw-activities/bulk', async (req, res) => {
         continue;
       }
       
-      // Lookup athlete ID by name (try nickname first, then name, then username)
-      const nameLower = String(act.athlete_name).toLowerCase().trim();
-      let athlete_id = athletesByNickname.get(nameLower) || athletesByName.get(nameLower) || athletesByUsername.get(nameLower) || null;
-      
+      // No need to lookup athlete_id - match purely by name
       const activity = {
-        athlete_id: athlete_id,
+        athlete_id: null, // Club activities don't have IDs
         athlete_name: act.athlete_name,
         distance: Number(act.distance) || 0,
         moving_time: Number(act.moving_time) || 0,

@@ -86,8 +86,8 @@ export default function Admin(){
 
         setRows(normalized)
         
-        // Build athlete names list for dropdown (prefer nickname, fallback to name)
-        const names = normalized.map(r => r.nickname || r.name).filter(Boolean).sort()
+        // Build athlete names list for dropdown - use real Strava name, NOT nickname
+        const names = normalized.map(r => r.name).filter(Boolean).sort()
         setAthleteNames(names)
         
         // reset editing state
