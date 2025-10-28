@@ -929,8 +929,82 @@ app.get('/debug/admin-clubs', async (req, res) => {
 app.get('/activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
   try {
-    const snaps = await db.collection('activities').get();
-    const rows = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Compute leaderboard from raw_activities instead of pre-aggregated summaries
+    const snaps = await db.collection('raw_activities').get();
+    const allActivities = snaps.docs.map(d => d.data());
+    
+    console.log(`Computing leaderboard from ${allActivities.length} raw activities`);
+    
+    // Aggregate by athlete name
+    const agg = new Map();
+    
+    for (const act of allActivities) {
+      const athleteName = (act.athlete_name || '').trim();
+      if (!athleteName) continue;
+      
+      const key = athleteName.toLowerCase(); // Case-insensitive grouping
+      const cur = agg.get(key) || {
+        name: athleteName,
+        distance: 0,
+        count: 0,
+        longest: 0,
+        total_moving_time: 0,
+        elev_gain: 0
+      };
+      
+      const dist = Number(act.distance || 0);
+      const mt = Number(act.moving_time || 0);
+      const eg = Number(act.elevation_gain || 0);
+      
+      cur.distance += dist;
+      cur.count += 1;
+      cur.longest = Math.max(cur.longest, dist);
+      cur.total_moving_time += mt;
+      cur.elev_gain += eg;
+      
+      agg.set(key, cur);
+    }
+    
+    // Load athlete metadata (nickname, goal) from summary_athletes
+    const athleteSnaps = await db.collection('summary_athletes').get();
+    const athleteMetadata = new Map();
+    athleteSnaps.docs.forEach(doc => {
+      const data = doc.data();
+      const name = (data.name || '').toLowerCase();
+      athleteMetadata.set(name, {
+        id: doc.id,
+        nickname: data.nickname || null,
+        goal: data.goal || 0,
+        name: data.name || ''
+      });
+    });
+    
+    // Build response rows
+    const rows = [];
+    for (const [key, summary] of agg.entries()) {
+      const meta = athleteMetadata.get(key);
+      const avgPaceSecPerKm = summary.distance > 0 ? Math.round(summary.total_moving_time / (summary.distance / 1000)) : null;
+      
+      rows.push({
+        id: meta ? meta.id : `name:${summary.name}`,
+        athlete: {
+          name: summary.name,
+          nickname: meta ? meta.nickname : null,
+          firstname: summary.name.split(' ')[0] || '',
+          lastname: summary.name.split(' ').slice(1).join(' ') || '',
+          goal: meta ? meta.goal : 0
+        },
+        summary: {
+          distance: summary.distance,
+          count: summary.count,
+          longest: summary.longest,
+          avg_pace: avgPaceSecPerKm,
+          elev_gain: summary.elev_gain,
+          updated_at: Date.now()
+        }
+      });
+    }
+    
     res.json({ rows });
   } catch (err) {
     console.error(err);
@@ -959,22 +1033,54 @@ app.get('/debug/admin', async (req, res) => {
 app.get('/admin/raw-activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
   try {
-    const athleteId = req.query && req.query.athlete_id ? String(req.query.athlete_id) : null;
-    let query = db.collection('raw_activities');
+    const athleteName = req.query && req.query.athlete_name ? String(req.query.athlete_name) : null;
+    const sortBy = req.query && req.query.sort_by ? String(req.query.sort_by) : 'start_date';
+    const sortOrder = req.query && req.query.sort_order ? String(req.query.sort_order) : 'desc';
     
-    if (athleteId) {
-      query = query.where('athlete_id', '==', athleteId);
+    // Get all activities (we'll filter and sort in-memory to avoid index requirements)
+    const snaps = await db.collection('raw_activities').limit(1000).get();
+    let activities = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
+    
+    // Filter by athlete name if provided (case-insensitive)
+    if (athleteName) {
+      const searchName = athleteName.toLowerCase().trim();
+      activities = activities.filter(a => {
+        const name = (a.athlete_name || '').toLowerCase().trim();
+        return name.includes(searchName);
+      });
     }
     
-    // Remove orderBy to avoid index requirement - sort client-side instead
-    const snaps = await query.limit(500).get();
-    const activities = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
-    
-    // Sort by start_date descending in-memory
+    // Sort in-memory
     activities.sort((a, b) => {
-      const dateA = a.start_date ? new Date(a.start_date).getTime() : 0;
-      const dateB = b.start_date ? new Date(b.start_date).getTime() : 0;
-      return dateB - dateA; // descending
+      let valA, valB;
+      
+      switch (sortBy) {
+        case 'start_date':
+          valA = a.start_date ? new Date(a.start_date).getTime() : 0;
+          valB = b.start_date ? new Date(b.start_date).getTime() : 0;
+          break;
+        case 'distance':
+          valA = Number(a.distance || 0);
+          valB = Number(b.distance || 0);
+          break;
+        case 'athlete_name':
+          valA = (a.athlete_name || '').toLowerCase();
+          valB = (b.athlete_name || '').toLowerCase();
+          break;
+        case 'source':
+          valA = a.source || '';
+          valB = b.source || '';
+          break;
+        default:
+          valA = a.start_date ? new Date(a.start_date).getTime() : 0;
+          valB = b.start_date ? new Date(b.start_date).getTime() : 0;
+      }
+      
+      if (sortOrder === 'asc') {
+        return valA > valB ? 1 : valA < valB ? -1 : 0;
+      } else {
+        return valA < valB ? 1 : valA > valB ? -1 : 0;
+      }
     });
     
     res.json({ ok: true, activities, count: activities.length });

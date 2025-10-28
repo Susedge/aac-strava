@@ -23,6 +23,9 @@ export default function Admin(){
   const [activities, setActivities] = useState([])
   const [activitiesLoading, setActivitiesLoading] = useState(false)
   const [showAddActivity, setShowAddActivity] = useState(false)
+  const [activityFilter, setActivityFilter] = useState('') // Filter by athlete name
+  const [activitySort, setActivitySort] = useState('start_date') // Sort field  
+  const [activitySortOrder, setActivitySortOrder] = useState('desc') // asc or desc
   const [newActivity, setNewActivity] = useState({
     athlete_name: '',
     distance: '',
@@ -270,7 +273,13 @@ export default function Admin(){
   async function loadActivities(){
     setActivitiesLoading(true)
     try{
-      const res = await fetch(`${API}/admin/raw-activities`)
+      const params = new URLSearchParams()
+      if (activityFilter) params.append('athlete_name', activityFilter)
+      if (activitySort) params.append('sort_by', activitySort)
+      if (activitySortOrder) params.append('sort_order', activitySortOrder)
+      
+      const url = `${API}/admin/raw-activities${params.toString() ? '?' + params.toString() : ''}`
+      const res = await fetch(url)
       const j = await res.json()
       setActivities(j.activities || [])
     }catch(e){
@@ -487,7 +496,7 @@ export default function Admin(){
           {activeTab === 'activities' && (
             <main style={{marginTop:20}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-                <h3 style={{margin:0}}>Activity Records</h3>
+                <h3 style={{margin:0}}>Activity Records ({activities.length})</h3>
                 <div style={{display:'flex',gap:8}}>
                   <button className="btn" onClick={() => setShowAddActivity(!showAddActivity)}>
                     {showAddActivity ? 'Cancel' : '+ Add Activity'}
@@ -495,6 +504,45 @@ export default function Admin(){
                   <button className="btn btn-ghost" onClick={handleBulkImport}>Import CSV</button>
                   <button className="btn btn-ghost" onClick={runAggregation}>Run Aggregation</button>
                 </div>
+              </div>
+
+              {/* Filters */}
+              <div style={{display:'flex',gap:12,marginBottom:16,alignItems:'flex-end'}}>
+                <div style={{flex:1}}>
+                  <label style={{display:'block',fontSize:12,marginBottom:4}}>Filter by Athlete</label>
+                  <input 
+                    type="text"
+                    className="admin-input" 
+                    value={activityFilter}
+                    onChange={e => setActivityFilter(e.target.value)}
+                    placeholder="Search athlete name..."
+                  />
+                </div>
+                <div>
+                  <label style={{display:'block',fontSize:12,marginBottom:4}}>Sort By</label>
+                  <select 
+                    className="admin-input" 
+                    value={activitySort}
+                    onChange={e => setActivitySort(e.target.value)}
+                  >
+                    <option value="start_date">Date</option>
+                    <option value="distance">Distance</option>
+                    <option value="athlete_name">Athlete</option>
+                    <option value="source">Source</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{display:'block',fontSize:12,marginBottom:4}}>Order</label>
+                  <select 
+                    className="admin-input" 
+                    value={activitySortOrder}
+                    onChange={e => setActivitySortOrder(e.target.value)}
+                  >
+                    <option value="desc">Descending</option>
+                    <option value="asc">Ascending</option>
+                  </select>
+                </div>
+                <button className="btn" onClick={loadActivities}>Apply</button>
               </div>
 
               {/* Add Activity Form */}
