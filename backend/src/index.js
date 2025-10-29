@@ -939,9 +939,12 @@ app.get('/activities', async (req, res) => {
     const agg = new Map();
     
     for (const act of allActivities) {
-      const athleteName = (act.athlete_name || '').trim();
+      const athleteNameRaw = (act.athlete_name || '').trim();
+      if (!athleteNameRaw) continue;
+      // Clean accidental leading zeros (some stored names start with '0')
+      const athleteName = athleteNameRaw.replace(/^0+(?=[A-Za-z])/, '').trim();
       if (!athleteName) continue;
-      
+
       const key = athleteName.toLowerCase(); // Case-insensitive grouping
       const cur = agg.get(key) || {
         name: athleteName,
@@ -970,8 +973,9 @@ app.get('/activities', async (req, res) => {
     const athleteMetadata = new Map();
     athleteSnaps.docs.forEach(doc => {
       const data = doc.data();
-      const name = (data.name || '').toLowerCase();
-      athleteMetadata.set(name, {
+      const rawName = (data.name || '').toString().trim();
+      const cleanName = rawName.replace(/^0+(?=[A-Za-z])/, '').toLowerCase();
+      athleteMetadata.set(cleanName, {
         id: doc.id,
         nickname: data.nickname || null,
         goal: data.goal || 0,
@@ -984,11 +988,14 @@ app.get('/activities', async (req, res) => {
     for (const [key, summary] of agg.entries()) {
       const meta = athleteMetadata.get(key);
       const avgPaceSecPerKm = summary.distance > 0 ? Math.round(summary.total_moving_time / (summary.distance / 1000)) : null;
-      
+
+      // Prefer stored nickname for display; fallback to summary name
+      const displayName = meta && meta.nickname ? meta.nickname : summary.name;
+
       rows.push({
         id: meta ? meta.id : `name:${summary.name}`,
         athlete: {
-          name: summary.name,
+          name: displayName,
           nickname: meta ? meta.nickname : null,
           firstname: summary.name.split(' ')[0] || '',
           lastname: summary.name.split(' ').slice(1).join(' ') || '',
