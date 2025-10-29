@@ -1354,6 +1354,24 @@ app.post('/admin/athlete/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message || String(e) }); }
 });
 
+// Admin: delete a summary athlete and its activity summary (does NOT remove raw_activities)
+app.delete('/admin/athlete/:id', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  const id = req.params && req.params.id;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  try {
+    // Delete summary_athletes doc
+    await db.collection('summary_athletes').doc(String(id)).delete();
+    // Also delete aggregated activities doc to keep UI consistent
+    try { await db.collection('activities').doc(String(id)).delete(); } catch(e) { /* ignore if missing */ }
+    console.log(`Deleted summary athlete ${id} and activities doc if existed`);
+    res.json({ ok: true, deleted: id });
+  } catch (e) {
+    console.error('Failed to delete athlete', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
 // Allow setting the admin club manually (useful if athlete belongs to multiple clubs or detected club is incorrect)
 app.post('/admin/set-club', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });

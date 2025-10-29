@@ -173,11 +173,21 @@ function formatNumber(n, decimals = 2){
 
 function formatName(athlete) {
   if (!athlete) return 'Unknown';
-  if (athlete.nickname) return athlete.nickname;
+  let nick = (athlete.nickname || '').toString().trim();
+  // Strip accidental leading zeros from nickname as well (some stored nicknames have a leading 0)
+  if (nick) {
+    nick = nick.replace(/^0+(?=[A-Za-z])/, '').trim();
+    if (nick) return nick;
+  }
   const f = athlete.firstname || athlete.first_name || '';
   const l = athlete.lastname || athlete.last_name || '';
-  const n = `${f} ${l}`.trim();
-  return n || athlete.username || athlete.name || 'Unknown';
+  let n = `${f} ${l}`.trim();
+  if (!n) n = athlete.name || athlete.username || '';
+  if (typeof n === 'string') {
+    // Some records have stray leading zeros (e.g. "0Carl …") — strip leading zeros when followed by letters
+    n = n.replace(/^0+(?=[A-Za-z])/, '').trim();
+  }
+  return n || 'Unknown';
 }
 
 export default function App(){

@@ -69,18 +69,28 @@ export default function Admin(){
         // Some endpoints return athlete under `athlete` or `member`
         const athlete = item.athlete || item.member || item.user || null
         const id = item.id || (athlete && (athlete.id || athlete.id_str)) || item._id || null
-        // derive a display name
-        let name = item.name || item.username || item.full_name || ''
-        if (!name && athlete) {
-          name = athlete.nickname || athlete.firstname || athlete.first_name || ''
-          if (athlete.lastname || athlete.last_name) name = (name + ' ' + (athlete.lastname || athlete.last_name)).trim()
-          if (!name) name = athlete.username || athlete.name || ''
+        // derive a display name (prefer real name fields over nickname for dropdown)
+        let realName = ''
+        if (athlete) {
+          // Prefer explicit name field, else firstname+lastname
+          realName = athlete.name || `${athlete.firstname || athlete.first_name || ''} ${athlete.lastname || athlete.last_name || ''}`.trim()
         }
+        if (!realName) realName = item.name || item.full_name || item.username || ''
+        // If the summary_athletes document used a name-based doc id (e.g. 'name:Arvin T.')
+        // prefer the id-derived full name when it contains more detail (middle initials)
+        try {
+          if (item.id && String(item.id).startsWith('name:')) {
+            const fromId = String(item.id).replace(/^name:/, '').trim()
+            if (fromId && fromId.length > (realName || '').trim().length) realName = fromId
+          }
+        } catch (e) { /* ignore */ }
+
+        // nickname stored separately; may be used for UI display elsewhere
         const nickname = item.nickname || (athlete && athlete.nickname) || ''
         const goal = item.goal || 0
         const distance_display = item.distance_display || item.distance || (item.summary && item.summary.distance) || ''
         const runs = item.runs || item.count || (item.summary && item.summary.count) || 0
-        return { id, name, nickname, goal, distance_display, distance: item.distance, runs, raw: item }
+        return { id, name: realName, nickname, goal, distance_display, distance: item.distance, runs, raw: item }
       }).filter(r => r.id !== null)
 
       if (normalized.length === 0 && raw.length > 0) {
@@ -90,7 +100,12 @@ export default function Admin(){
         setRows(normalized)
         
         // Build athlete names list for dropdown - use real Strava name, NOT nickname
-        const names = normalized.map(r => r.name).filter(Boolean).sort()
+        const nameSet = new Map()
+        normalized.forEach(r => {
+          const n = (r.name || '').trim()
+          if (n && !nameSet.has(n.toLowerCase())) nameSet.set(n.toLowerCase(), n)
+        })
+        const names = Array.from(nameSet.values()).sort((a,b)=> a.localeCompare(b))
         setAthleteNames(names)
         
         // reset editing state
@@ -201,6 +216,21 @@ export default function Admin(){
     setSavingAll(false)
   }
 
+  async function handleDeleteAthlete(id){
+    if (!id) return alert('No id to delete')
+    if (!confirm('Delete this athlete summary? This will remove the member row and aggregated summary (raw activities will not be deleted).')) return
+    try{
+      const res = await fetch(`${API}/admin/athlete/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Delete failed')
+      alert('Athlete deleted')
+      load()
+      loadActivities()
+    }catch(e){
+      console.error('Failed to delete athlete', e)
+      alert('Error deleting athlete: ' + e.message)
+    }
+  }
+
   // apply search filtering so CompactTable only shows matching rows
   const filtered = rows.filter(r => {
     if (!search) return true
@@ -242,6 +272,14 @@ export default function Admin(){
         onChange={e=>handleGoalEdit(item.id, e.target.value)}
       />
     ), sort: { sortKey: 'goal' }}
+    ,{ label: 'Actions', renderCell: (item) => (
+      <div style={{display:'flex',gap:8}}>
+        <button
+          onClick={() => handleDeleteAthlete(item.raw && item.raw.id ? item.raw.id : item.id)}
+          style={{background:'#fee2e2',color:'#991b1b',border:'none',padding:'6px 10px',borderRadius:4,cursor:'pointer'}}
+        >Delete</button>
+      </div>
+    ) }
   ];
 
   const theme = useTheme({
