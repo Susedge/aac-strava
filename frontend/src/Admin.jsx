@@ -401,6 +401,20 @@ export default function Admin(){
     }
   }
 
+  async function handleCleanup(){
+    if (!confirm('This will remove duplicate raw activity records. Continue?')) return
+    try{
+      const res = await fetch(`${API}/admin/cleanup-raw-activities`, { method: 'POST' })
+      if (!res.ok) throw new Error('Cleanup failed')
+      const j = await res.json()
+      alert(`Cleanup complete. Deleted ${j.deleted || 0} duplicate activities, kept ${j.kept || 0}.`)
+      loadActivities()
+    }catch(e){
+      console.error('Cleanup failed', e)
+      alert('Error: ' + e.message)
+    }
+  }
+
 
   return (
     <div className="admin-page admin-card">
@@ -503,6 +517,7 @@ export default function Admin(){
                   </button>
                   <button className="btn btn-ghost" onClick={handleBulkImport}>Import CSV</button>
                   <button className="btn btn-ghost" onClick={runAggregation}>Run Aggregation</button>
+                  <button className="btn btn-ghost" onClick={handleCleanup}>Cleanup Duplicates</button>
                 </div>
               </div>
 

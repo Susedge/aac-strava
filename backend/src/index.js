@@ -1090,6 +1090,73 @@ app.get('/admin/raw-activities', async (req, res) => {
   }
 });
 
+// Admin: Cleanup duplicate raw activities (keeps latest or prefers strava_api)
+app.post('/admin/cleanup-raw-activities', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const snaps = await db.collection('raw_activities').get();
+    const seen = new Map();
+    const toDelete = [];
+
+    snaps.docs.forEach(doc => {
+      const data = doc.data();
+      const name = (data.athlete_name || '').toLowerCase().trim();
+      const date = data.start_date || '';
+      const distance = Math.round(Number(data.distance || 0));
+      if (!name || !date) return; // skip unidentifiable
+      const key = `${name}|${date}|${distance}`;
+
+      if (!seen.has(key)) {
+        seen.set(key, { id: doc.id, data });
+        return;
+      }
+
+      // Duplicate found - decide which to keep
+      const existing = seen.get(key);
+      const preferCurrent = () => {
+        seen.set(key, { id: doc.id, data });
+        toDelete.push(existing.id);
+      };
+
+      // If either one is source 'strava_api', prefer that
+      const currIsStrava = data.source === 'strava_api';
+      const existingIsStrava = existing.data && existing.data.source === 'strava_api';
+      if (currIsStrava && !existingIsStrava) {
+        preferCurrent();
+      } else if (!currIsStrava && existingIsStrava) {
+        toDelete.push(doc.id);
+      } else {
+        // Neither or both strava_api: keep the one with newer updated_at
+        const currUpdated = Number(data.updated_at || 0);
+        const existUpdated = Number(existing.data.updated_at || 0);
+        if (currUpdated >= existUpdated) {
+          preferCurrent();
+        } else {
+          toDelete.push(doc.id);
+        }
+      }
+    });
+
+    // Perform deletions in batches of 500
+    let deleted = 0;
+    const batchSize = 500;
+    for (let i = 0; i < toDelete.length; i += batchSize) {
+      const batch = db.batch();
+      const slice = toDelete.slice(i, i + batchSize);
+      slice.forEach(id => batch.delete(db.collection('raw_activities').doc(id)));
+      await batch.commit();
+      deleted += slice.length;
+    }
+
+    const kept = snaps.size - deleted;
+    console.log(`Cleanup complete. Deleted ${deleted} duplicates, kept ${kept}`);
+    res.json({ ok: true, deleted, kept });
+  } catch (e) {
+    console.error('Cleanup failed', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
 // Admin: Add a new manual activity (using athlete name)
 app.post('/admin/raw-activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
