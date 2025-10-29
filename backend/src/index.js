@@ -972,14 +972,28 @@ app.get('/activities', async (req, res) => {
     const athleteSnaps = await db.collection('summary_athletes').get();
     const athleteMetadata = new Map();
     athleteSnaps.docs.forEach(doc => {
-      const data = doc.data();
-      const rawName = (data.name || '').toString().trim();
-      const cleanName = rawName.replace(/^0+(?=[A-Za-z])/, '').toLowerCase();
-      athleteMetadata.set(cleanName, {
+      const data = doc.data() || {};
+      const rawNameField = (data.name || '').toString().trim();
+      const fromId = String(doc.id || '').startsWith('name:') ? String(doc.id).replace(/^name:/, '').trim() : null;
+      // Determine canonical name: prefer explicit name field, else id-derived name, else username-like
+      const canonical = rawNameField || fromId || (data.username || '') || '';
+      const cleanCanonical = canonical.replace(/^0+(?=[A-Za-z])/, '').toLowerCase();
+      // Determine nickname: prefer stored nickname; if missing but doc id has a fuller name, use that as nickname
+      const storedNick = (data.nickname || '').toString().trim();
+      const cleanStoredNick = storedNick ? storedNick.replace(/^0+(?=[A-Za-z])/, '').trim() : '';
+      let nicknameToUse = cleanStoredNick || null;
+      if (!nicknameToUse && fromId) {
+        // if id-derived name is longer/more detailed than name field, promote it to nickname
+        if ((fromId || '').length > (rawNameField || '').length) {
+          nicknameToUse = fromId.replace(/^0+(?=[A-Za-z])/, '').trim();
+        }
+      }
+
+      athleteMetadata.set(cleanCanonical, {
         id: doc.id,
-        nickname: data.nickname || null,
-        goal: data.goal || 0,
-        name: data.name || ''
+        nickname: nicknameToUse,
+        goal: Number(data.goal || 0) || 0,
+        name: canonical || ''
       });
     });
     
@@ -989,16 +1003,22 @@ app.get('/activities', async (req, res) => {
       const meta = athleteMetadata.get(key);
       const avgPaceSecPerKm = summary.distance > 0 ? Math.round(summary.total_moving_time / (summary.distance / 1000)) : null;
 
-      // Prefer stored nickname for display; fallback to summary name
-      const displayName = meta && meta.nickname ? meta.nickname : summary.name;
+      // Clean nickname and summary name (strip accidental leading zeros)
+      const rawSummaryName = (summary.name || '').toString().trim();
+      const cleanSummaryName = rawSummaryName.replace(/^0+(?=[A-Za-z])/, '').trim();
+      const rawNick = meta && meta.nickname ? String(meta.nickname).trim() : '';
+      const cleanNick = rawNick ? rawNick.replace(/^0+(?=[A-Za-z])/, '').trim() : '';
+
+      // Prefer cleaned nickname for display; fallback to cleaned summary name
+      const displayName = cleanNick || cleanSummaryName || ('Unknown');
 
       rows.push({
         id: meta ? meta.id : `name:${summary.name}`,
         athlete: {
           name: displayName,
-          nickname: meta ? meta.nickname : null,
-          firstname: summary.name.split(' ')[0] || '',
-          lastname: summary.name.split(' ').slice(1).join(' ') || '',
+          nickname: cleanNick || null,
+          firstname: (cleanSummaryName.split(' ')[0] || '') ,
+          lastname: (cleanSummaryName.split(' ').slice(1).join(' ') || ''),
           goal: meta ? meta.goal : 0
         },
         summary: {
@@ -1323,6 +1343,19 @@ app.get('/admin/athletes', async (req, res) => {
     const rows = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
     res.json({ ok: true, rows });
   } catch (e) { res.status(500).json({ error: e.message || String(e) }); }
+});
+
+// Debug: list summary_athletes documents (id, name, nickname, goal)
+app.get('/admin/summary-athletes', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const snaps = await db.collection('summary_athletes').orderBy('name').get();
+    const rows = snaps.docs.map(d => ({ id: d.id, name: d.data().name || null, nickname: d.data().nickname || null, goal: d.data().goal || 0 }));
+    res.json({ ok: true, rows, count: rows.length });
+  } catch (e) {
+    console.error('Failed listing summary_athletes', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
 });
 
 // Admin: update an athlete's nickname, goal, and optional manual strava id
