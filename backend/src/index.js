@@ -936,17 +936,35 @@ app.get('/activities', async (req, res) => {
     
     console.log(`Computing leaderboard from ${allActivities.length} raw activities`);
     
+    // Helper to normalize names for stable matching between summary_athletes and raw_activities
+    const normalizeNameKey = (s) => {
+      if (!s) return '';
+      try {
+        // Remove leading zeros, punctuation, collapse spaces, lowercase
+        return s.toString().trim()
+          .replace(/^0+/, '')
+          .replace(/\./g, '')
+          .replace(/[^\w\s]/g, '')
+          .replace(/\s+/g, ' ')
+          .toLowerCase();
+      } catch (e) { return String(s || '').toLowerCase().trim(); }
+    };
+
     // Aggregate by athlete name
     const agg = new Map();
     
     for (const act of allActivities) {
-      const athleteNameRaw = (act.athlete_name || '').trim();
+      let athleteNameRaw = '';
+      if (act.athlete_name) athleteNameRaw = act.athlete_name;
+      else if (act.athlete && (act.athlete.firstname || act.athlete.lastname)) athleteNameRaw = `${act.athlete.firstname || ''} ${act.athlete.lastname || ''}`;
+      athleteNameRaw = (athleteNameRaw || '').toString().trim();
       if (!athleteNameRaw) continue;
-      // Clean accidental leading zeros (some stored names start with '0')
+
+      // Clean name and normalize into stable key
       const athleteName = athleteNameRaw.replace(/^0+(?=[A-Za-z])/, '').trim();
       if (!athleteName) continue;
 
-      const key = athleteName.toLowerCase(); // Case-insensitive grouping
+      const key = normalizeNameKey(athleteName); // Case-insensitive grouping with normalization
       const cur = agg.get(key) || {
         name: athleteName,
         distance: 0,
@@ -971,6 +989,11 @@ app.get('/activities', async (req, res) => {
     
     // Load athlete metadata (nickname, goal) from summary_athletes
     const athleteSnaps = await db.collection('summary_athletes').get();
+    // Build two lookup maps:
+    //  - athleteMetadataById: keyed by the Firestore doc id (e.g. 'name:Arsel V.' or numeric id)
+    //  - athleteMetadata: keyed by normalized canonical names (legacy fallback)
+    const athleteMetadataById = new Map();
+    const athleteMetadataByIdLower = new Map();
     const athleteMetadata = new Map();
     athleteSnaps.docs.forEach(doc => {
       const data = doc.data() || {};
@@ -978,32 +1001,79 @@ app.get('/activities', async (req, res) => {
       const fromId = String(doc.id || '').startsWith('name:') ? String(doc.id).replace(/^name:/, '').trim() : null;
       // Determine canonical name: prefer explicit name field, else id-derived name, else username-like
       const canonical = rawNameField || fromId || (data.username || '') || '';
-      const cleanCanonical = canonical.replace(/^0+(?=[A-Za-z])/, '').toLowerCase();
+      const cleanCanonical = canonical.replace(/^0+(?=[A-Za-z])/, '').trim();
       // Determine nickname: prefer stored nickname; if missing but doc id has a fuller name, use that as nickname
       const storedNick = (data.nickname || '').toString().trim();
       const cleanStoredNick = storedNick ? storedNick.replace(/^0+(?=[A-Za-z])/, '').trim() : '';
       let nicknameToUse = cleanStoredNick || null;
       if (!nicknameToUse && fromId) {
-        // if id-derived name is longer/more detailed than name field, promote it to nickname
+        // if id-derived name is longer/more-detailed than name field, promote it to nickname
         if ((fromId || '').length > (rawNameField || '').length) {
           nicknameToUse = fromId.replace(/^0+(?=[A-Za-z])/, '').trim();
         }
       }
 
-      athleteMetadata.set(cleanCanonical, {
+      const meta = {
         id: doc.id,
         nickname: nicknameToUse,
         goal: Number(data.goal || 0) || 0,
         name: canonical || ''
-      });
+      };
+
+      // Store by doc id for direct lookup (preferred)
+      const docId = String(doc.id || '');
+      athleteMetadataById.set(docId, meta);
+      athleteMetadataByIdLower.set(docId.toLowerCase(), meta);
+
+      // Also keep normalized-name fallback mapping for compatibility
+      const k1 = normalizeNameKey(cleanCanonical);
+      if (k1 && !athleteMetadata.has(k1)) athleteMetadata.set(k1, meta);
+      if (fromId) {
+        const k2 = normalizeNameKey(fromId.replace(/^0+(?=[A-Za-z])/, '').trim());
+        if (k2 && !athleteMetadata.has(k2)) athleteMetadata.set(k2, meta);
+      }
+      if (cleanCanonical) {
+        const first = (cleanCanonical.split(' ')[0] || '').trim();
+        const k3 = normalizeNameKey(first);
+        if (k3 && !athleteMetadata.has(k3)) athleteMetadata.set(k3, meta);
+      }
     });
     
     // Build response rows
     const rows = [];
-    for (const [key, summary] of agg.entries()) {
-      const meta = athleteMetadata.get(key);
-      const avgPaceSecPerKm = summary.distance > 0 ? Math.round(summary.total_moving_time / (summary.distance / 1000)) : null;
+    // Helper: attempt to find summary_athletes meta by doc id derived from the activity's name or athlete id
+    const findMetaForSummary = (summary, normalizedKey) => {
+      // 1) If athlete object has an id, prefer that doc id
+      if (summary && summary.athlete && (summary.athlete.id || summary.athlete.athlete_id)) {
+        const aid = String(summary.athlete.id || summary.athlete.athlete_id);
+        if (athleteMetadataById.has(aid)) return athleteMetadataById.get(aid);
+        if (athleteMetadataByIdLower.has(aid.toLowerCase())) return athleteMetadataByIdLower.get(aid.toLowerCase());
+      }
 
+      // 2) Try doc id variants using the aggregated summary.name (which contains the human name)
+      const rawSummaryName = (summary && summary.name) ? String(summary.name).trim() : '';
+      if (rawSummaryName) {
+        const candidates = [];
+        const cleaned = rawSummaryName.replace(/^0+(?=[A-Za-z])/, '').trim();
+        candidates.push(`name:${cleaned}`);
+        candidates.push(`name:${cleaned.replace(/\./g, '')}`);
+        candidates.push(`name:${cleaned.replace(/[^\w\s]/g, '')}`);
+        candidates.push(`name:${cleaned.replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()}`);
+        for (const c of candidates) {
+          if (athleteMetadataById.has(c)) return athleteMetadataById.get(c);
+          const low = c.toLowerCase();
+          if (athleteMetadataByIdLower.has(low)) return athleteMetadataByIdLower.get(low);
+        }
+      }
+
+      // 3) Fallback to normalized-name lookup (legacy behavior)
+      if (normalizedKey && athleteMetadata.has(normalizedKey)) return athleteMetadata.get(normalizedKey);
+      return null;
+    };
+
+    for (const [key, summary] of agg.entries()) {
+      const meta = findMetaForSummary(summary, key);
+      const avgPaceSecPerKm = summary.distance > 0 ? Math.round(summary.total_moving_time / (summary.distance / 1000)) : null;
       // Clean nickname and summary name (strip accidental leading zeros)
       const rawSummaryName = (summary.name || '').toString().trim();
       const cleanSummaryName = rawSummaryName.replace(/^0+(?=[A-Za-z])/, '').trim();
