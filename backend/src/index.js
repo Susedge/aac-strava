@@ -1193,8 +1193,6 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
   try {
     const snaps = await db.collection('raw_activities').get();
-    const seen = new Map();
-    const toDelete = [];
 
     // Build a duplicate key using only the fields the user requested.
     const buildDupKey = (data) => {
@@ -1226,40 +1224,55 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
         .join('|');
     };
 
+    // Group docs by duplicate key first (two-pass). This ensures we only delete when a key has >1 docs.
+    const groups = new Map();
     snaps.docs.forEach(doc => {
       const data = doc.data();
       const key = buildDupKey(data);
       if (!key) return; // skip unidentifiable
-
-      if (!seen.has(key)) {
-        seen.set(key, { id: doc.id, data });
-        return;
-      }
-
-      // Duplicate found - decide which to keep. Per request, prioritize older records.
-      const existing = seen.get(key);
-
-      const tsOf = (d) => {
-        // Use whichever timestamp is available (prefer created_at, then fetched_at, then updated_at). Fall back to large number for safety.
-        if (!d) return Number.MAX_SAFE_INTEGER;
-        return Number(d.created_at || d.fetched_at || d.updated_at || Number.MAX_SAFE_INTEGER);
-      };
-
-      const currTs = tsOf(data);
-      const existTs = tsOf(existing.data);
-
-      if (currTs < existTs) {
-        // Current doc is older -> keep current, mark previous for deletion
-        seen.set(key, { id: doc.id, data });
-        toDelete.push(existing.id);
-      } else {
-        // Existing is older or equal -> delete current
-        toDelete.push(doc.id);
-      }
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ id: doc.id, data });
     });
 
-    // Perform deletions in batches of 500
+    const toDelete = [];
+
+    // Helper to compute timestamp for ordering (prefer older = smaller value)
+    const tsOf = (d) => Number(d && (d.created_at || d.fetched_at || d.updated_at) || Number.MAX_SAFE_INTEGER);
+
+    for (const [key, list] of groups.entries()) {
+      if (!Array.isArray(list) || list.length <= 1) {
+        // No duplicates for this key -> do not delete anything
+        continue;
+      }
+
+      // If none of the docs have any timestamp fields, skip deleting to avoid removing
+      // ambiguous records (we don't want to delete arbitrarily when timestamps are missing).
+      const anyHasTs = list.some(item => tsOf(item.data) !== Number.MAX_SAFE_INTEGER);
+      if (!anyHasTs) {
+        console.log(`Skipping duplicate key '${key}' because no timestamp fields were found on its ${list.length} docs`);
+        continue;
+      }
+
+      // Choose the doc to keep: the one with the smallest timestamp (oldest). Documents with missing
+      // timestamps are treated as very large and will not be preferred as the one to keep.
+      let keep = list[0];
+      for (const item of list) {
+        if (tsOf(item.data) < tsOf(keep.data)) keep = item;
+      }
+
+      // Mark all others for deletion
+      for (const item of list) {
+        if (item.id !== keep.id) toDelete.push(item.id);
+      }
+    }
+
+    // Perform deletions in batches of 500 (if any)
     let deleted = 0;
+    if (toDelete.length === 0) {
+      console.log('Cleanup complete. No duplicates found to delete.');
+      return res.json({ ok: true, deleted: 0, kept: snaps.size });
+    }
+
     const batchSize = 500;
     for (let i = 0; i < toDelete.length; i += batchSize) {
       const batch = db.batch();
