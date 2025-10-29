@@ -473,7 +473,9 @@ app.post('/aggregate/weekly', async (req, res) => {
                 athlete_name: athleteName,
                 distance: distance,
                 moving_time: Number(act.moving_time || 0),
-                start_date: startDate,
+                // Use the activity's provided start_date (or start_date_local) when available.
+                // `startDate` variable was not defined here which causes ReferenceError.
+                start_date: act.start_date || act.start_date_local || null,
                 type: act.type || 'Run',
                 name: act.name || 'Activity',
                 elevation_gain: Number(act.total_elevation_gain || act.elev_total || 0),

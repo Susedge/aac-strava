@@ -237,6 +237,11 @@ export default function App(){
       const rows = r.data.rows || []
       const prepared = rows.map(a=>{
         const athlete = a.athlete ? {...a.athlete} : {};
+        // Some backend rows populate nickname on other fields (summary_athlete etc.).
+        // Prefer explicit nickname when present; otherwise fall back to any name value so UI shows a sensible display name.
+        if (!athlete.nickname && a.summary_athlete && a.summary_athlete.nickname) athlete.nickname = a.summary_athlete.nickname;
+        if (!athlete.nickname && a.nickname) athlete.nickname = a.nickname;
+        if (!athlete.nickname && athlete.name) athlete.nickname = athlete.name;
         if (!athlete.profile && a.athlete_profile) athlete.profile = a.athlete_profile;
         if (!athlete.profile && a.athleteProfile) athlete.profile = a.athleteProfile;
         return {
