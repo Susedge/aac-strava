@@ -458,23 +458,22 @@ app.post('/aggregate/weekly', async (req, res) => {
             const batch = db.batch();
             let storedCount = 0;
             for (const act of acts) {
-              // Club activities don't have individual activity IDs
-              // Create a unique ID based on athlete + distance only (ignore date) so aggregation
-              // can detect existing records even if start_date varies between sources
+              // Club activities don't have individual activity IDs in the API response.
+              // Try to detect an existing raw_activities doc and update it instead of creating a new one.
               const athleteName = act.athlete ? `${act.athlete.firstname || ''} ${act.athlete.lastname || ''}`.trim() : 'unknown';
               const athleteId = act.athlete && act.athlete.id ? String(act.athlete.id) : null;
               const distance = Number(act.distance || 0);
-              
-              // Generate a unique document ID based on athlete and distance (no date)
-              const uniqueId = `${athleteId || athleteName}_${Math.round(distance)}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-              
+              const moving_time = Number(act.moving_time || 0);
+              const start_date = act.start_date || act.start_date_local || null;
+
               const activityDoc = {
                 athlete_id: athleteId,
                 athlete_name: athleteName,
                 distance: distance,
-                moving_time: Number(act.moving_time || 0),
-                // We intentionally omit start_date here — raw_activities will remain the source of truth
-                // and other metadata (distance, moving_time, athlete_name) are sufficient for aggregation.
+                moving_time: moving_time,
+                // Include start_date when available so edits on Strava (which update start_date)
+                // can be matched and merged instead of creating a new record.
+                ...(start_date ? { start_date } : {}),
                 type: act.type || 'Run',
                 name: act.name || 'Activity',
                 elevation_gain: Number(act.total_elevation_gain || act.elev_total || 0),
@@ -482,9 +481,64 @@ app.post('/aggregate/weekly', async (req, res) => {
                 fetched_at: Date.now(),
                 updated_at: Date.now()
               };
-              
-              // Use generated ID to avoid duplicates
-              batch.set(db.collection('raw_activities').doc(uniqueId), activityDoc, { merge: true });
+
+              let docRef = null;
+
+              try {
+                // Prefer matching by athlete_id + start_date if both available
+                if (athleteId && start_date) {
+                  const q = await db.collection('raw_activities')
+                    .where('athlete_id', '==', athleteId)
+                    .where('start_date', '==', start_date)
+                    .limit(1)
+                    .get();
+                  if (!q.empty) docRef = q.docs[0].ref;
+                }
+
+                // If not found, try athlete_name + start_date
+                if (!docRef && athleteName && start_date) {
+                  const q2 = await db.collection('raw_activities')
+                    .where('athlete_name', '==', athleteName)
+                    .where('start_date', '==', start_date)
+                    .limit(1)
+                    .get();
+                  if (!q2.empty) docRef = q2.docs[0].ref;
+                }
+
+                // Fallback: match by athlete_id + distance + moving_time (exact match)
+                if (!docRef && athleteId) {
+                  const q3 = await db.collection('raw_activities')
+                    .where('athlete_id', '==', athleteId)
+                    .where('distance', '==', distance)
+                    .where('moving_time', '==', moving_time)
+                    .limit(1)
+                    .get();
+                  if (!q3.empty) docRef = q3.docs[0].ref;
+                }
+
+                // Fallback: match by athlete_name + distance + moving_time
+                if (!docRef) {
+                  const q4 = await db.collection('raw_activities')
+                    .where('athlete_name', '==', athleteName)
+                    .where('distance', '==', distance)
+                    .where('moving_time', '==', moving_time)
+                    .limit(1)
+                    .get();
+                  if (!q4.empty) docRef = q4.docs[0].ref;
+                }
+              } catch (qErr) {
+                console.warn('Error querying raw_activities for existing doc; will fallback to generated id', qErr && qErr.message || qErr);
+              }
+
+              if (docRef) {
+                // Update existing document (merge) so edits on Strava modify the stored record
+                batch.set(docRef, activityDoc, { merge: true });
+              } else {
+                // Generate a unique document ID based on athlete + distance (no date) as before
+                const uniqueId = `${athleteId || athleteName}_${Math.round(distance)}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+                batch.set(db.collection('raw_activities').doc(uniqueId), activityDoc, { merge: true });
+              }
+
               storedCount++;
             }
             
