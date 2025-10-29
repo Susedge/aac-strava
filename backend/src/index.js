@@ -1126,42 +1126,65 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
     const seen = new Map();
     const toDelete = [];
 
+    // Build a duplicate key using only the fields the user requested.
+    const buildDupKey = (data) => {
+      if (!data) return null;
+      // Athlete identity: prefer structured athlete object when available, else parse athlete_name
+      let fn = '';
+      let ln = '';
+      if (data.athlete && typeof data.athlete === 'object') {
+        fn = (data.athlete.firstname || data.athlete.first_name || '').toString().trim();
+        ln = (data.athlete.lastname || data.athlete.last_name || '').toString().trim();
+      } else if (data.athlete_name) {
+        const parts = data.athlete_name.toString().trim().split(/\s+/);
+        fn = parts[0] || '';
+        ln = parts.slice(1).join(' ') || '';
+      }
+
+      const activityName = (data.name || '').toString().trim();
+      const distance = Math.round(Number(data.distance || data.distance_m || 0));
+      const moving_time = Number(data.moving_time || 0);
+      const elapsed_time = Number(data.elapsed_time || 0);
+      const elev = Number(data.total_elevation_gain || data.elevation_gain || data.elev_total || 0);
+      const type = (data.type || '').toString().trim();
+      const sport_type = (data.sport_type || '').toString().trim();
+      const workout_type = (data.workout_type || '').toString().trim();
+
+      // Lowercase and join into a stable key
+      return [fn, ln, activityName, String(distance), String(moving_time), String(elapsed_time), String(elev), type, sport_type, workout_type]
+        .map(s => (s || '').toString().toLowerCase().replace(/\s+/g, ' ').trim())
+        .join('|');
+    };
+
     snaps.docs.forEach(doc => {
       const data = doc.data();
-  const name = (data.athlete_name || '').toLowerCase().trim();
-  const distance = Math.round(Number(data.distance || 0));
-  if (!name) return; // skip unidentifiable
-  // Key without date so duplicates are determined by athlete+distance only
-  const key = `${name}|${distance}`;
+      const key = buildDupKey(data);
+      if (!key) return; // skip unidentifiable
 
       if (!seen.has(key)) {
         seen.set(key, { id: doc.id, data });
         return;
       }
 
-      // Duplicate found - decide which to keep
+      // Duplicate found - decide which to keep. Per request, prioritize older records.
       const existing = seen.get(key);
-      const preferCurrent = () => {
-        seen.set(key, { id: doc.id, data });
-        toDelete.push(existing.id);
+
+      const tsOf = (d) => {
+        // Use whichever timestamp is available (prefer created_at, then fetched_at, then updated_at). Fall back to large number for safety.
+        if (!d) return Number.MAX_SAFE_INTEGER;
+        return Number(d.created_at || d.fetched_at || d.updated_at || Number.MAX_SAFE_INTEGER);
       };
 
-      // If either one is source 'strava_api', prefer that
-      const currIsStrava = data.source === 'strava_api';
-      const existingIsStrava = existing.data && existing.data.source === 'strava_api';
-      if (currIsStrava && !existingIsStrava) {
-        preferCurrent();
-      } else if (!currIsStrava && existingIsStrava) {
-        toDelete.push(doc.id);
+      const currTs = tsOf(data);
+      const existTs = tsOf(existing.data);
+
+      if (currTs < existTs) {
+        // Current doc is older -> keep current, mark previous for deletion
+        seen.set(key, { id: doc.id, data });
+        toDelete.push(existing.id);
       } else {
-        // Neither or both strava_api: keep the one with newer updated_at
-        const currUpdated = Number(data.updated_at || 0);
-        const existUpdated = Number(existing.data.updated_at || 0);
-        if (currUpdated >= existUpdated) {
-          preferCurrent();
-        } else {
-          toDelete.push(doc.id);
-        }
+        // Existing is older or equal -> delete current
+        toDelete.push(doc.id);
       }
     });
 
