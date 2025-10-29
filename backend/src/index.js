@@ -526,58 +526,6 @@ app.post('/aggregate/weekly', async (req, res) => {
                     .get();
                   if (!q4.empty) docRef = q4.docs[0].ref;
                 }
-
-                // If still not found in active collection, check the archive for a matching doc and restore it.
-                if (!docRef) {
-                  try {
-                    // Try same matching queries against raw_activities_archive
-                    let archiveHit = null;
-                    if (athleteId && start_date) {
-                      const a1 = await db.collection('raw_activities_archive')
-                        .where('athlete_id', '==', athleteId)
-                        .where('start_date', '==', start_date)
-                        .limit(1).get();
-                      if (!a1.empty) archiveHit = a1.docs[0];
-                    }
-                    if (!archiveHit && athleteName && start_date) {
-                      const a2 = await db.collection('raw_activities_archive')
-                        .where('athlete_name', '==', athleteName)
-                        .where('start_date', '==', start_date)
-                        .limit(1).get();
-                      if (!a2.empty) archiveHit = a2.docs[0];
-                    }
-                    if (!archiveHit && athleteId) {
-                      const a3 = await db.collection('raw_activities_archive')
-                        .where('athlete_id', '==', athleteId)
-                        .where('distance', '==', distance)
-                        .where('moving_time', '==', moving_time)
-                        .limit(1).get();
-                      if (!a3.empty) archiveHit = a3.docs[0];
-                    }
-                    if (!archiveHit) {
-                      const a4 = await db.collection('raw_activities_archive')
-                        .where('athlete_name', '==', athleteName)
-                        .where('distance', '==', distance)
-                        .where('moving_time', '==', moving_time)
-                        .limit(1).get();
-                      if (!a4.empty) archiveHit = a4.docs[0];
-                    }
-
-                    if (archiveHit) {
-                      // Restore archived doc into raw_activities (merge archived fields with new activityDoc)
-                      const archivedData = archiveHit.data() || {};
-                      const restoreRef = db.collection('raw_activities').doc(archiveHit.id);
-                      // Merge archived data, but overwrite with fresh values from activityDoc and mark as restored
-                      const restored = Object.assign({}, archivedData, activityDoc, { _restored_at: Date.now(), _restored_from_archive: true });
-                      batch.set(restoreRef, restored, { merge: true });
-                      // Use the restored ref as the docRef for further logic
-                      docRef = restoreRef;
-                      console.log(`Restored archived activity ${archiveHit.id} into raw_activities`);
-                    }
-                  } catch (archErr) {
-                    console.warn('Archive lookup failed', archErr && archErr.message || archErr);
-                  }
-                }
               } catch (qErr) {
                 console.warn('Error querying raw_activities for existing doc; will fallback to generated id', qErr && qErr.message || qErr);
               }
@@ -606,35 +554,37 @@ app.post('/aggregate/weekly', async (req, res) => {
           console.error('Error details:', storeErr.message || storeErr);
         }
 
-        // After storing fetched Strava activities, reload the canonical stored activities from
-        // `raw_activities` and use them as the source of truth for aggregation. This prevents
-        // losing older records when the Strava API only returns a limited recent window.
-        let storedActivities = [];
+        // Load manual activities from raw_activities collection
+        let manualActivities = [];
         try {
-          const storedSnaps = await db.collection('raw_activities').get();
-          storedActivities = storedSnaps.docs.map(d => ({ id: d.id, ...d.data() }));
-          console.log(`Loaded ${storedActivities.length} stored raw activities from raw_activities`);
-        } catch (storeErr) {
-          console.warn('Failed to load stored raw_activities', storeErr.message || storeErr);
+          const manualSnaps = await db.collection('raw_activities')
+            .where('source', 'in', ['manual', 'bulk_import'])
+            .get();
+          manualActivities = manualSnaps.docs.map(d => d.data());
+          console.log(`Loaded ${manualActivities.length} manual activities from raw_activities`);
+        } catch (manualErr) {
+          console.warn('Failed to load manual activities', manualErr.message || manualErr);
         }
 
-        // Map stored raw_activities into the shape expected by the aggregator (similar to Strava API shape)
-        const allActivities = storedActivities.map(sa => {
-          const athleteName = sa.athlete_name || '';
+        // Combine Strava activities + manual activities
+        const allActivities = [...acts, ...manualActivities.map(ma => {
+          const athleteName = ma.athlete_name || '';
+          
+          // Create athlete object that matches Strava format (name-based, no ID needed)
           return {
             athlete: {
-              firstname: (sa.athlete && (sa.athlete.firstname || sa.athlete.first_name)) || (athleteName.split(' ')[0] || ''),
-              lastname: (sa.athlete && (sa.athlete.lastname || sa.athlete.last_name)) || (athleteName.split(' ').slice(1).join(' ') || '')
+              firstname: athleteName.split(' ')[0] || '',
+              lastname: athleteName.split(' ').slice(1).join(' ') || ''
             },
-            distance: sa.distance || 0,
-            moving_time: sa.moving_time || 0,
-            start_date: sa.start_date || null,
-            type: sa.type || 'Run',
-            name: sa.name || 'Activity',
-            total_elevation_gain: sa.elevation_gain || sa.total_elevation_gain || 0
+            distance: ma.distance,
+            moving_time: ma.moving_time,
+            start_date: ma.start_date,
+            type: ma.type,
+            name: ma.name,
+            total_elevation_gain: ma.elevation_gain
           };
-        });
-        console.log(`Total activities (from stored raw_activities): ${allActivities.length}`);
+        })];
+        console.log(`Total activities (Strava + Manual): ${allActivities.length}`);
 
         // Aggregate activities by athlete name ONLY (since club activities don't have IDs)
         const agg = new Map();
@@ -1338,7 +1288,7 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
       groups.get(key).push({ id: doc.id, data });
     });
 
-  const toMark = [];
+    const toDelete = [];
 
     // Helper to compute timestamp for ordering (prefer older = smaller value)
     const tsOf = (d) => Number(d && (d.created_at || d.fetched_at || d.updated_at) || Number.MAX_SAFE_INTEGER);
@@ -1364,44 +1314,31 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
         if (tsOf(item.data) < tsOf(keep.data)) keep = item;
       }
 
-      // Mark all others as duplicates (store full item so we can update them in-place)
+      // Mark all others for deletion
       for (const item of list) {
-        if (item.id !== keep.id) toMark.push({ id: item.id, data: item.data, keptId: keep.id, dupKey: key });
+        if (item.id !== keep.id) toDelete.push(item.id);
       }
     }
 
     // Perform deletions in batches of 500 (if any)
     let deleted = 0;
-    if (toMark.length === 0) {
-      console.log('Cleanup complete. No duplicates found to mark.');
-      return res.json({ ok: true, marked: 0, kept: snaps.size });
+    if (toDelete.length === 0) {
+      console.log('Cleanup complete. No duplicates found to delete.');
+      return res.json({ ok: true, deleted: 0, kept: snaps.size });
     }
 
     const batchSize = 500;
-    let marked = 0;
-    for (let i = 0; i < toMark.length; i += batchSize) {
+    for (let i = 0; i < toDelete.length; i += batchSize) {
       const batch = db.batch();
-      const slice = toMark.slice(i, i + batchSize);
-      slice.forEach(item => {
-        try {
-          const update = {
-            _is_duplicate: true,
-            _duplicate_of: item.keptId,
-            _duplicate_key: item.dupKey,
-            _duplicate_marked_at: Date.now()
-          };
-          batch.set(db.collection('raw_activities').doc(item.id), update, { merge: true });
-        } catch (e) {
-          console.warn('Failed marking duplicate for', item.id, e && e.message || e);
-        }
-      });
+      const slice = toDelete.slice(i, i + batchSize);
+      slice.forEach(id => batch.delete(db.collection('raw_activities').doc(id)));
       await batch.commit();
-      marked += slice.length;
+      deleted += slice.length;
     }
 
-    const kept = snaps.size;
-    console.log(`Cleanup complete. Marked ${marked} duplicates, kept ${kept} originals`);
-    res.json({ ok: true, marked: marked, kept: kept });
+    const kept = snaps.size - deleted;
+    console.log(`Cleanup complete. Deleted ${deleted} duplicates, kept ${kept}`);
+    res.json({ ok: true, deleted, kept });
   } catch (e) {
     console.error('Cleanup failed', e);
     res.status(500).json({ error: e.message || String(e) });
