@@ -459,14 +459,14 @@ app.post('/aggregate/weekly', async (req, res) => {
             let storedCount = 0;
             for (const act of acts) {
               // Club activities don't have individual activity IDs
-              // Create a unique ID based on athlete + date + distance
+              // Create a unique ID based on athlete + distance only (ignore date) so aggregation
+              // can detect existing records even if start_date varies between sources
               const athleteName = act.athlete ? `${act.athlete.firstname || ''} ${act.athlete.lastname || ''}`.trim() : 'unknown';
               const athleteId = act.athlete && act.athlete.id ? String(act.athlete.id) : null;
-              const startDate = act.start_date || new Date().toISOString();
               const distance = Number(act.distance || 0);
               
-              // Generate a unique document ID (hash-like identifier)
-              const uniqueId = `${athleteId || athleteName}_${startDate}_${distance}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+              // Generate a unique document ID based on athlete and distance (no date)
+              const uniqueId = `${athleteId || athleteName}_${Math.round(distance)}`.replace(/[^a-zA-Z0-9_-]/g, '_');
               
               const activityDoc = {
                 athlete_id: athleteId,
@@ -1100,11 +1100,11 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
 
     snaps.docs.forEach(doc => {
       const data = doc.data();
-      const name = (data.athlete_name || '').toLowerCase().trim();
-      const date = data.start_date || '';
-      const distance = Math.round(Number(data.distance || 0));
-      if (!name || !date) return; // skip unidentifiable
-      const key = `${name}|${date}|${distance}`;
+  const name = (data.athlete_name || '').toLowerCase().trim();
+  const distance = Math.round(Number(data.distance || 0));
+  if (!name) return; // skip unidentifiable
+  // Key without date so duplicates are determined by athlete+distance only
+  const key = `${name}|${distance}`;
 
       if (!seen.has(key)) {
         seen.set(key, { id: doc.id, data });
