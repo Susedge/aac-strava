@@ -665,6 +665,15 @@ app.post('/aggregate/weekly', async (req, res) => {
           results.push({ id: docId, summary });
         }
 
+        // Store last aggregation timestamp in admin/strava doc
+        try {
+          await db.collection('admin').doc('strava').set({
+            last_aggregation_at: Date.now()
+          }, { merge: true });
+        } catch (e) {
+          console.warn('Failed to update last_aggregation_at', e.message || e);
+        }
+
         return res.json({ ok: true, results, membersCount: members.length, activitiesCount: acts.length });
       } catch (err) {
         console.error('club activities fetch failed', err.response ? err.response.data : err.message);
@@ -702,6 +711,15 @@ app.post('/aggregate/weekly', async (req, res) => {
       } catch (err) {
         console.error('activities fetch failed for', a.athlete && a.athlete.id, err.response ? err.response.data : err.message);
       }
+    }
+
+    // Store last aggregation timestamp in admin/strava doc
+    try {
+      await db.collection('admin').doc('strava').set({
+        last_aggregation_at: Date.now()
+      }, { merge: true });
+    } catch (e) {
+      console.warn('Failed to update last_aggregation_at', e.message || e);
     }
 
     res.json({ ok: true, results });
@@ -984,6 +1002,18 @@ app.get('/debug/admin-clubs', async (req, res) => {
 app.get('/activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
   try {
+    // Get last aggregation timestamp from admin/strava doc
+    let lastAggregationAt = null;
+    try {
+      const adminDoc = await db.collection('admin').doc('strava').get();
+      if (adminDoc.exists) {
+        const data = adminDoc.data();
+        lastAggregationAt = data && data.last_aggregation_at ? data.last_aggregation_at : null;
+      }
+    } catch (e) {
+      console.warn('Failed to read last_aggregation_at', e.message || e);
+    }
+
     // Compute leaderboard from raw_activities instead of pre-aggregated summaries
     const snaps = await db.collection('raw_activities').get();
     const allActivities = snaps.docs.map(d => d.data());
@@ -1152,12 +1182,12 @@ app.get('/activities', async (req, res) => {
           longest: summary.longest,
           avg_pace: avgPaceSecPerKm,
           elev_gain: summary.elev_gain,
-          updated_at: Date.now()
+          updated_at: lastAggregationAt || Date.now()
         }
       });
     }
     
-    res.json({ rows });
+    res.json({ rows, last_aggregation_at: lastAggregationAt });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'failed' });
@@ -1248,34 +1278,60 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
   try {
     const snaps = await db.collection('raw_activities').get();
 
-    // Build a duplicate key using only the fields the user requested.
+    // Build a duplicate key using the exact fields requested by the user.
+    // This uses resource_state, athlete.{resource_state,firstname,lastname}, name,
+    // distance (in km rounded to 2 decimals), the longest of moving_time/elapsed_time,
+    // elapsed_time, total_elevation_gain, type, sport_type, workout_type.
     const buildDupKey = (data) => {
       if (!data) return null;
       // Athlete identity: prefer structured athlete object when available, else parse athlete_name
       let fn = '';
       let ln = '';
+      let athleteResourceState = '';
       if (data.athlete && typeof data.athlete === 'object') {
         fn = (data.athlete.firstname || data.athlete.first_name || '').toString().trim();
         ln = (data.athlete.lastname || data.athlete.last_name || '').toString().trim();
+        athleteResourceState = (data.athlete.resource_state !== undefined && data.athlete.resource_state !== null) ? String(data.athlete.resource_state) : '';
       } else if (data.athlete_name) {
         const parts = data.athlete_name.toString().trim().split(/\s+/);
         fn = parts[0] || '';
         ln = parts.slice(1).join(' ') || '';
       }
 
+      const resourceState = (data.resource_state !== undefined && data.resource_state !== null) ? String(data.resource_state) : '';
       const activityName = (data.name || '').toString().trim();
-      const distance = Math.round(Number(data.distance || data.distance_m || 0));
+
+      // Normalize distance to kilometers with two-decimal precision for dedupe key
+      const rawDistanceMeters = Number(data.distance || data.distance_m || 0);
+      const distance_km = Math.round((rawDistanceMeters / 1000) * 100) / 100; // e.g. 4.12
+
+      // Use the longest reported time between moving_time and elapsed_time to be robust
       const moving_time = Number(data.moving_time || 0);
       const elapsed_time = Number(data.elapsed_time || 0);
+      const time_for_key = Math.max(moving_time || 0, elapsed_time || 0);
+
       const elev = Number(data.total_elevation_gain || data.elevation_gain || data.elev_total || 0);
       const type = (data.type || '').toString().trim();
       const sport_type = (data.sport_type || '').toString().trim();
-      const workout_type = (data.workout_type || '').toString().trim();
+      const workout_type = (data.workout_type !== undefined && data.workout_type !== null) ? String(data.workout_type) : '';
+
+      const parts = [
+        resourceState,
+        athleteResourceState,
+        fn,
+        ln,
+        activityName,
+        String(distance_km),
+        String(time_for_key),
+        String(elapsed_time || ''),
+        String(elev),
+        type,
+        sport_type,
+        workout_type
+      ];
 
       // Lowercase and join into a stable key
-      return [fn, ln, activityName, String(distance), String(moving_time), String(elapsed_time), String(elev), type, sport_type, workout_type]
-        .map(s => (s || '').toString().toLowerCase().replace(/\s+/g, ' ').trim())
-        .join('|');
+      return parts.map(s => (s || '').toString().toLowerCase().replace(/\s+/g, ' ').trim()).join('|');
     };
 
     // Group docs by duplicate key first (two-pass). This ensures we only delete when a key has >1 docs.

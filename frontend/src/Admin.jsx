@@ -22,6 +22,8 @@ export default function Admin(){
   // Activity management state
   const [activities, setActivities] = useState([])
   const [activitiesLoading, setActivitiesLoading] = useState(false)
+  const [adminBusy, setAdminBusy] = useState(false)
+  const [adminBusyMsg, setAdminBusyMsg] = useState('')
   const [showAddActivity, setShowAddActivity] = useState(false)
   const [activityFilter, setActivityFilter] = useState('') // Filter by athlete name
   const [activitySort, setActivitySort] = useState('start_date') // Sort field  
@@ -328,6 +330,15 @@ export default function Admin(){
     }
   }
 
+  // Real-time filter: when activityFilter/sort options change, reload activities (debounced)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      loadActivities()
+    }, 350)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityFilter, activitySort, activitySortOrder])
+
   async function handleAddActivity(e){
     e && e.preventDefault()
     if (!newActivity.athlete_name || !newActivity.distance || !newActivity.start_date) {
@@ -426,30 +437,41 @@ export default function Admin(){
 
   async function runAggregation(){
     if (!confirm('Run aggregation to recalculate all summaries?')) return
-    
     try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Running aggregation…')
       const res = await fetch(`${API}/aggregate/weekly`, { method: 'POST' })
       if (!res.ok) throw new Error('Aggregation failed')
-      
       const result = await res.json()
       alert(`Aggregation complete! Processed ${result.results?.length || 0} athletes`)
+      // refresh lists
+      await load()
+      await loadActivities()
     }catch(e){
       console.error('Aggregation failed', e)
       alert('Error: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
     }
   }
 
   async function handleCleanup(){
     if (!confirm('This will remove duplicate raw activity records. Continue?')) return
     try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Cleaning up duplicates…')
       const res = await fetch(`${API}/admin/cleanup-raw-activities`, { method: 'POST' })
       if (!res.ok) throw new Error('Cleanup failed')
       const j = await res.json()
       alert(`Cleanup complete. Deleted ${j.deleted || 0} duplicate activities, kept ${j.kept || 0}.`)
-      loadActivities()
+      await loadActivities()
     }catch(e){
       console.error('Cleanup failed', e)
       alert('Error: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
     }
   }
 
@@ -705,6 +727,7 @@ export default function Admin(){
                   <table style={{width:'100%',borderCollapse:'collapse',fontSize:14}}>
                     <thead>
                       <tr style={{borderBottom:'2px solid #e2e8f0',textAlign:'left'}}>
+                        <th style={{padding:12}}>#</th>
                         <th style={{padding:12}}>Date</th>
                         <th style={{padding:12}}>Athlete</th>
                         <th style={{padding:12}}>Name</th>
@@ -716,13 +739,27 @@ export default function Admin(){
                       </tr>
                     </thead>
                     <tbody>
-                      {activities.map(act => (
+                      {activities.map((act, idx) => (
                         <tr key={act.id} style={{borderBottom:'1px solid #e2e8f0'}}>
+                          <td style={{padding:12}}>{idx + 1}</td>
                           <td style={{padding:12}}>{act.start_date ? new Date(act.start_date).toLocaleDateString() : '-'}</td>
                           <td style={{padding:12}}>{act.athlete_name || act.athlete_id}</td>
                           <td style={{padding:12}}>{act.name || '-'}</td>
                           <td style={{padding:12}}>{((act.distance || 0) / 1000).toFixed(2)} km</td>
-                          <td style={{padding:12}}>{act.moving_time ? Math.floor(act.moving_time / 60) + ' min' : '-'}</td>
+                          <td style={{padding:12}}>{
+                            (() => {
+                              const moving = Number(act.moving_time || 0)
+                              const elapsed = Number(act.elapsed_time || 0)
+                              const tsec = Math.max(moving, elapsed)
+                              if (!tsec) return '-'
+                              if (tsec >= 3600) {
+                                const hrs = Math.floor(tsec / 3600)
+                                const mins = Math.floor((tsec % 3600) / 60)
+                                return `${hrs}h ${mins}m`
+                              }
+                              return `${Math.floor(tsec / 60)} min`
+                            })()
+                          }</td>
                           <td style={{padding:12}}>{act.type || 'Run'}</td>
                           <td style={{padding:12}}>
                             <span style={{
@@ -762,12 +799,12 @@ export default function Admin(){
             </main>
           )}
 
-          {(loading || savingAll || activitiesLoading) && (
+          {(loading || savingAll || activitiesLoading || adminBusy) && (
             <div className="page-loader">
               <div className="loader-box">
                 <div className="spinner"/> 
                 <div>
-                  {savingAll ? 'Saving changes…' : activitiesLoading ? 'Loading activities…' : 'Loading members…'}
+                  {adminBusy ? (adminBusyMsg || 'Working…') : (savingAll ? 'Saving changes…' : activitiesLoading ? 'Loading activities…' : 'Loading members…')}
                 </div>
               </div>
             </div>

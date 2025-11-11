@@ -235,6 +235,13 @@ export default function App(){
       setLoading(true)
       const r = await axios.get(`${API}/activities`)
       const rows = r.data.rows || []
+      // Use last_aggregation_at from the API response if available
+      const lastAggTS = r.data.last_aggregation_at || null;
+      if (lastAggTS) {
+        setLastUpdated(new Date(lastAggTS).toISOString());
+      } else {
+        setLastUpdated(null);
+      }
       const prepared = rows.map(a=>{
         const athlete = a.athlete ? {...a.athlete} : {};
         // Some backend rows populate nickname on other fields (summary_athlete etc.).
@@ -257,16 +264,6 @@ export default function App(){
       })
       prepared.sort((a,b)=> (b.distance||0) - (a.distance||0))
       setItems(prepared)
-      // Compute last updated timestamp from activities summary.updated_at if available
-      try {
-        const timestamps = rows.map(r => (r.summary && r.summary.updated_at) || null).filter(Boolean);
-        if (timestamps.length) {
-          const maxTs = Math.max(...timestamps);
-          setLastUpdated(new Date(maxTs).toISOString());
-        } else {
-          setLastUpdated(null);
-        }
-      } catch (e) { setLastUpdated(null); }
     }catch(e){
       console.error(e)
     }finally{
