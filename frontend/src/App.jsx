@@ -294,24 +294,25 @@ export default function App(){
     <div className="app">
       <div className="challenge-title">
         AAC COMMIT TO RUN CHALLENGE 2025
-        {lastUpdated && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '12px',
-                fontSize: '11px',
-                fontFamily: 'Arial, sans-serif',
-                fontWeight: 'normal',
-                color: 'white',
-                textTransform: 'none',
-                letterSpacing: 'normal',
-                lineHeight: '1',
-                fontStyle: 'normal',
-                marginTop: '5px'
-              }}
-            >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '12px',
+            fontSize: '11px',
+            fontFamily: 'Arial, sans-serif',
+            fontWeight: 'normal',
+            color: 'white',
+            textTransform: 'none',
+            letterSpacing: 'normal',
+            lineHeight: '1',
+            fontStyle: 'normal',
+            marginTop: '5px'
+          }}
+        >
+          {lastUpdated && (
+            <>
               <div>
                 Synced: {new Date(lastUpdated).toLocaleDateString('en-US', {
                   month: '2-digit',
@@ -326,14 +327,15 @@ export default function App(){
 
               {/* visual separator */}
               <div aria-hidden style={{width:1, height:14, background:'rgba(255,255,255,0.22)'}} />
+            </>
+          )}
 
-              {/* countdown to Dec 11 12:00 PM PH */}
-              <div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-start'}}>
-                <div style={{fontFamily: 'monospace', fontSize: '11px', color: '#fff', opacity: 0.95}} title="Countdown to Dec 11 12:00 PM (PH)">{countdown}</div>
-                <div style={{fontSize: '10px', color: 'rgba(255,255,255,0.7)', marginTop: 2}}>Countdown until Dec 11 12:00 PM (PH)</div>
-              </div>
-            </div>
-        )}
+          {/* countdown to Dec 11 12:00 PM PH */}
+          <div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-start'}}>
+            <div style={{fontFamily: 'monospace', fontSize: '11px', color: '#fff', opacity: 0.95}} title="Countdown to Dec 11 12:00 PM (PH)">{countdown}</div>
+            <div style={{fontSize: '10px', color: 'rgba(255,255,255,0.7)', marginTop: 2}}>Countdown until Dec 11 12:00 PM (PH)</div>
+          </div>
+        </div>
       </div>
 
       <main>
