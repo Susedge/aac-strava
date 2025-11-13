@@ -773,22 +773,20 @@ export default function Admin(){
                             </span>
                           </td>
                           <td style={{padding:12}}>
-                            {act.source === 'manual' && (
-                              <button 
-                                onClick={() => handleDeleteActivity(act.id)} 
-                                style={{
-                                  background:'#fee2e2',
-                                  color:'#991b1b',
-                                  border:'none',
-                                  padding:'4px 12px',
-                                  borderRadius:4,
-                                  fontSize:12,
-                                  cursor:'pointer'
-                                }}
-                              >
-                                Delete
-                              </button>
-                            )}
+                            <button 
+                              onClick={() => handleDeleteActivity(act.id)} 
+                              style={{
+                                background:'#fee2e2',
+                                color:'#991b1b',
+                                border:'none',
+                                padding:'4px 12px',
+                                borderRadius:4,
+                                fontSize:12,
+                                cursor:'pointer'
+                              }}
+                            >
+                              Delete
+                            </button>
                           </td>
                         </tr>
                       ))}

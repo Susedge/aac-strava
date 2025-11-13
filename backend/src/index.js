@@ -554,6 +554,73 @@ app.post('/aggregate/weekly', async (req, res) => {
           console.error('Error details:', storeErr.message || storeErr);
         }
 
+        // CLEANUP OLD STRAVA RECORDS: Backup and remove old Strava-sourced activities
+        // that were not refetched in this aggregation (likely deleted on Strava or beyond 44-day API limit)
+        try {
+          const aggregationRunTime = Date.now();
+          const oldThresholdMs = aggregationRunTime - (48 * 60 * 60 * 1000); // 48 hours grace period before this run
+          
+          console.log('Checking for old Strava records to backup and cleanup...');
+          
+          // Find all Strava-sourced activities that haven't been updated in this or recent runs
+          const oldStravaSnap = await db.collection('raw_activities')
+            .where('source', '==', 'strava_api')
+            .get();
+          
+          const oldRecords = [];
+          oldStravaSnap.docs.forEach(doc => {
+            const data = doc.data();
+            const fetchedAt = data.fetched_at || data.updated_at || 0;
+            
+            // If this record wasn't touched in this aggregation run (fetched_at is old), it's stale
+            if (fetchedAt < oldThresholdMs) {
+              oldRecords.push({
+                id: doc.id,
+                data: data
+              });
+            }
+          });
+          
+          if (oldRecords.length > 0) {
+            console.log(`Found ${oldRecords.length} old Strava records to backup and remove`);
+            
+            // Backup to raw_activities_backup collection
+            const backupBatch = db.batch();
+            const deleteBatch = db.batch();
+            
+            oldRecords.forEach(record => {
+              // Add timestamp of when backed up
+              const backupDoc = {
+                ...record.data,
+                backed_up_at: aggregationRunTime,
+                original_id: record.id,
+                backup_reason: 'stale_strava_record_not_refetched'
+              };
+              
+              // Write to backup collection
+              const backupRef = db.collection('raw_activities_backup').doc(record.id);
+              backupBatch.set(backupRef, backupDoc);
+              
+              // Delete from raw_activities
+              const deleteRef = db.collection('raw_activities').doc(record.id);
+              deleteBatch.delete(deleteRef);
+            });
+            
+            // Commit backup first, then delete
+            await backupBatch.commit();
+            console.log(`Backed up ${oldRecords.length} old records to raw_activities_backup`);
+            
+            await deleteBatch.commit();
+            console.log(`Removed ${oldRecords.length} old Strava records from raw_activities`);
+          } else {
+            console.log('No old Strava records to cleanup');
+          }
+        } catch (cleanupErr) {
+          console.error('Failed to backup/cleanup old Strava records:', cleanupErr);
+          console.error('Error details:', cleanupErr.message || cleanupErr);
+          // Continue with aggregation even if cleanup fails
+        }
+
         // Load manual activities from raw_activities collection
         let manualActivities = [];
         try {
