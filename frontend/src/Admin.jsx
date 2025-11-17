@@ -475,6 +475,26 @@ export default function Admin(){
     }
   }
 
+  async function handleRestoreBackup(){
+    if (!confirm('This will restore all activities from raw_activities_backup back to raw_activities. Continue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Restoring backup data…')
+      const res = await fetch(`${API}/admin/restore-backup`, { method: 'POST' })
+      if (!res.ok) throw new Error('Restore failed')
+      const j = await res.json()
+      alert(j.message || `Restore complete. Restored ${j.restored || 0} activities.`)
+      await loadActivities()
+      await load()
+    }catch(e){
+      console.error('Restore failed', e)
+      alert('Error: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
 
   return (
     <div className="admin-page admin-card">
@@ -576,6 +596,7 @@ export default function Admin(){
                     {showAddActivity ? 'Cancel' : '+ Add Activity'}
                   </button>
                   <button className="btn btn-ghost" onClick={handleBulkImport}>Import CSV</button>
+                  <button className="btn btn-ghost" onClick={handleRestoreBackup}>Restore Backup</button>
                   <button className="btn btn-ghost" onClick={runAggregation}>Run Aggregation</button>
                   <button className="btn btn-ghost" onClick={handleCleanup}>Cleanup Duplicates</button>
                 </div>

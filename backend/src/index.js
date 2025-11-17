@@ -554,104 +554,37 @@ app.post('/aggregate/weekly', async (req, res) => {
           console.error('Error details:', storeErr.message || storeErr);
         }
 
-        // CLEANUP OLD STRAVA RECORDS: Backup and remove old Strava-sourced activities
-        // that were not refetched in this aggregation (likely deleted on Strava or beyond 44-day API limit)
+        // Load ALL activities from raw_activities for aggregation (preserves full history)
+        // This ensures we aggregate all stored activities, not just recent Strava API fetches
+        let allStoredActivities = [];
         try {
-          const aggregationRunTime = Date.now();
-          const oldThresholdMs = aggregationRunTime - (48 * 60 * 60 * 1000); // 48 hours grace period before this run
-          
-          console.log('Checking for old Strava records to backup and cleanup...');
-          
-          // Find all Strava-sourced activities that haven't been updated in this or recent runs
-          const oldStravaSnap = await db.collection('raw_activities')
-            .where('source', '==', 'strava_api')
-            .get();
-          
-          const oldRecords = [];
-          oldStravaSnap.docs.forEach(doc => {
-            const data = doc.data();
-            const fetchedAt = data.fetched_at || data.updated_at || 0;
-            
-            // If this record wasn't touched in this aggregation run (fetched_at is old), it's stale
-            if (fetchedAt < oldThresholdMs) {
-              oldRecords.push({
-                id: doc.id,
-                data: data
-              });
-            }
-          });
-          
-          if (oldRecords.length > 0) {
-            console.log(`Found ${oldRecords.length} old Strava records to backup and remove`);
-            
-            // Backup to raw_activities_backup collection
-            const backupBatch = db.batch();
-            const deleteBatch = db.batch();
-            
-            oldRecords.forEach(record => {
-              // Add timestamp of when backed up
-              const backupDoc = {
-                ...record.data,
-                backed_up_at: aggregationRunTime,
-                original_id: record.id,
-                backup_reason: 'stale_strava_record_not_refetched'
-              };
-              
-              // Write to backup collection
-              const backupRef = db.collection('raw_activities_backup').doc(record.id);
-              backupBatch.set(backupRef, backupDoc);
-              
-              // Delete from raw_activities
-              const deleteRef = db.collection('raw_activities').doc(record.id);
-              deleteBatch.delete(deleteRef);
-            });
-            
-            // Commit backup first, then delete
-            await backupBatch.commit();
-            console.log(`Backed up ${oldRecords.length} old records to raw_activities_backup`);
-            
-            await deleteBatch.commit();
-            console.log(`Removed ${oldRecords.length} old Strava records from raw_activities`);
-          } else {
-            console.log('No old Strava records to cleanup');
-          }
-        } catch (cleanupErr) {
-          console.error('Failed to backup/cleanup old Strava records:', cleanupErr);
-          console.error('Error details:', cleanupErr.message || cleanupErr);
-          // Continue with aggregation even if cleanup fails
+          const allSnaps = await db.collection('raw_activities').get();
+          allStoredActivities = allSnaps.docs.map(d => d.data());
+          console.log(`Loaded ${allStoredActivities.length} total activities from raw_activities for aggregation`);
+        } catch (loadErr) {
+          console.error('Failed to load raw_activities for aggregation:', loadErr);
+          console.error('Error details:', loadErr.message || loadErr);
         }
 
-        // Load manual activities from raw_activities collection
-        let manualActivities = [];
-        try {
-          const manualSnaps = await db.collection('raw_activities')
-            .where('source', 'in', ['manual', 'bulk_import'])
-            .get();
-          manualActivities = manualSnaps.docs.map(d => d.data());
-          console.log(`Loaded ${manualActivities.length} manual activities from raw_activities`);
-        } catch (manualErr) {
-          console.warn('Failed to load manual activities', manualErr.message || manualErr);
-        }
-
-        // Combine Strava activities + manual activities
-        const allActivities = [...acts, ...manualActivities.map(ma => {
-          const athleteName = ma.athlete_name || '';
+        // Convert all stored activities to aggregation format
+        const allActivities = allStoredActivities.map(act => {
+          const athleteName = act.athlete_name || '';
           
-          // Create athlete object that matches Strava format (name-based, no ID needed)
           return {
             athlete: {
+              id: act.athlete_id || null,
               firstname: athleteName.split(' ')[0] || '',
               lastname: athleteName.split(' ').slice(1).join(' ') || ''
             },
-            distance: ma.distance,
-            moving_time: ma.moving_time,
-            start_date: ma.start_date,
-            type: ma.type,
-            name: ma.name,
-            total_elevation_gain: ma.elevation_gain
+            distance: act.distance || 0,
+            moving_time: act.moving_time || 0,
+            start_date: act.start_date,
+            type: act.type || 'Run',
+            name: act.name || 'Activity',
+            total_elevation_gain: act.elevation_gain || act.total_elevation_gain || 0
           };
-        })];
-        console.log(`Total activities (Strava + Manual): ${allActivities.length}`);
+        });
+        console.log(`Aggregating ${allActivities.length} total activities (all sources, full history)`);
 
         // Aggregate activities by athlete name ONLY (since club activities don't have IDs)
         const agg = new Map();
@@ -668,10 +601,7 @@ app.post('/aggregate/weekly', async (req, res) => {
         };
 
         for (const it of allActivities) {
-          if (it.start_date) {
-            const ts = Date.parse(it.start_date);
-            if (!Number.isNaN(ts) && ts / 1000 < oneWeekAgo) continue;
-          }
+          // Removed date filtering - aggregate ALL activities regardless of age
           const key = makeAthleteKey(it.athlete) || null;
           if (!key) continue; // Skip activities without identifiable athlete
           
@@ -1464,6 +1394,57 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
     res.json({ ok: true, deleted, kept });
   } catch (e) {
     console.error('Cleanup failed', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Admin: Restore backed-up activities from raw_activities_backup collection
+app.post('/admin/restore-backup', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    console.log('Starting backup restoration...');
+    
+    // Check if backup collection exists and has data
+    const backupSnap = await db.collection('raw_activities_backup').get();
+    
+    if (backupSnap.empty) {
+      console.log('No backup data found');
+      return res.json({ ok: true, restored: 0, message: 'No backup data found to restore' });
+    }
+    
+    console.log(`Found ${backupSnap.size} backed up records`);
+    
+    // Restore in batches
+    let restored = 0;
+    const batchSize = 500;
+    const docs = backupSnap.docs;
+    
+    for (let i = 0; i < docs.length; i += batchSize) {
+      const batch = db.batch();
+      const slice = docs.slice(i, i + batchSize);
+      
+      slice.forEach(doc => {
+        const data = doc.data();
+        // Remove backup-specific fields
+        delete data.backed_up_at;
+        delete data.backup_reason;
+        const originalId = data.original_id || doc.id;
+        delete data.original_id;
+        
+        // Restore to raw_activities with original ID
+        const restoreRef = db.collection('raw_activities').doc(originalId);
+        batch.set(restoreRef, data, { merge: true });
+      });
+      
+      await batch.commit();
+      restored += slice.length;
+      console.log(`Restored ${restored}/${docs.length} records`);
+    }
+    
+    console.log(`Restoration complete. Restored ${restored} activities`);
+    res.json({ ok: true, restored, message: `Successfully restored ${restored} activities from backup` });
+  } catch (e) {
+    console.error('Restore failed', e);
     res.status(500).json({ error: e.message || String(e) });
   }
 });
