@@ -505,26 +505,77 @@ app.post('/aggregate/weekly', async (req, res) => {
                   if (!q2.empty) docRef = q2.docs[0].ref;
                 }
 
-                // Fallback: match by athlete_id + distance + moving_time (exact match)
+                // Fallback: attempt fuzzy matching instead of strict equality
+                // Firestore range queries across multiple fields are limited, so fetch a small
+                // set of candidate docs by athlete_id or athlete_name then compare in-app
+                // using tolerances for distance and moving_time and proximity for start_date.
+                const findFuzzyMatch = async ({ byAthleteId, byAthleteName, distanceVal, movingTimeVal, startDateVal }) => {
+                  const MAX_CANDIDATES = 50; // limit to keep it fast
+                  const DISTANCE_TOLERANCE_ABS = 30; // meters absolute fallback
+                  const DISTANCE_TOLERANCE_REL = 0.02; // or 2% relative
+                  const MT_TOLERANCE_SEC = 20; // seconds
+                  const START_DATE_TOLERANCE_MS = 2 * 60 * 1000; // 2 minutes
+
+                  const withinTolerance = (a, b) => {
+                    if (typeof a !== 'number' || typeof b !== 'number') return false;
+                    const abs = Math.abs(a - b);
+                    const rel = Math.abs(a - b) / Math.max(1, Math.max(Math.abs(a), Math.abs(b)));
+                    return abs <= DISTANCE_TOLERANCE_ABS || rel <= DISTANCE_TOLERANCE_REL;
+                  };
+
+                  try {
+                    let q;
+                    if (byAthleteId) {
+                      q = await db.collection('raw_activities').where('athlete_id', '==', byAthleteId).limit(MAX_CANDIDATES).get();
+                    } else if (byAthleteName) {
+                      q = await db.collection('raw_activities').where('athlete_name', '==', byAthleteName).limit(MAX_CANDIDATES).get();
+                    } else {
+                      return null;
+                    }
+
+                    if (!q || q.empty) return null;
+
+                    // iterate candidates and pick the first close match
+                    for (const cand of q.docs) {
+                      const d = cand.data();
+                      // Compare start_date if present on both records: use proximity match (within 2 minutes)
+                      if (d.start_date && startDateVal) {
+                        try {
+                          const candMs = new Date(String(d.start_date)).getTime();
+                          const curMs = new Date(String(startDateVal)).getTime();
+                          if (!Number.isNaN(candMs) && !Number.isNaN(curMs)) {
+                            if (Math.abs(candMs - curMs) <= START_DATE_TOLERANCE_MS) {
+                              return cand.ref;
+                            }
+                          }
+                        } catch (err) { /* ignore bad dates */ }
+                      }
+
+                      // Otherwise check distance + moving_time within tolerant bounds
+                      const candDist = Number(d.distance || 0);
+                      const candMt = Number(d.moving_time || 0);
+                      const distMatch = withinTolerance(candDist, Number(distanceVal || 0));
+                      const mtMatch = Math.abs(candMt - Number(movingTimeVal || 0)) <= MT_TOLERANCE_SEC;
+                      if (distMatch && mtMatch) return cand.ref;
+                    }
+
+                    return null;
+                  } catch (err) {
+                    console.warn('Fuzzy match query failed', err && err.message || err);
+                    return null;
+                  }
+                };
+
+                // Try fuzzy match by athlete_id first
                 if (!docRef && athleteId) {
-                  const q3 = await db.collection('raw_activities')
-                    .where('athlete_id', '==', athleteId)
-                    .where('distance', '==', distance)
-                    .where('moving_time', '==', moving_time)
-                    .limit(1)
-                    .get();
-                  if (!q3.empty) docRef = q3.docs[0].ref;
+                  const found = await findFuzzyMatch({ byAthleteId: athleteId, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date });
+                  if (found) docRef = found;
                 }
 
-                // Fallback: match by athlete_name + distance + moving_time
-                if (!docRef) {
-                  const q4 = await db.collection('raw_activities')
-                    .where('athlete_name', '==', athleteName)
-                    .where('distance', '==', distance)
-                    .where('moving_time', '==', moving_time)
-                    .limit(1)
-                    .get();
-                  if (!q4.empty) docRef = q4.docs[0].ref;
+                // Then try fuzzy match by athlete_name
+                if (!docRef && athleteName) {
+                  const found2 = await findFuzzyMatch({ byAthleteName: athleteName, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date });
+                  if (found2) docRef = found2;
                 }
               } catch (qErr) {
                 console.warn('Error querying raw_activities for existing doc; will fallback to generated id', qErr && qErr.message || qErr);
@@ -534,8 +585,12 @@ app.post('/aggregate/weekly', async (req, res) => {
                 // Update existing document (merge) so edits on Strava modify the stored record
                 batch.set(docRef, activityDoc, { merge: true });
               } else {
-                // Generate a unique document ID based on athlete + distance (no date) as before
-                const uniqueId = `${athleteId || athleteName}_${Math.round(distance)}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+                // Generate a deterministic unique document ID that includes athlete, rounded distance,
+                // moving_time and start_date (when available) to reduce accidental duplicates.
+                const sanitize = (s) => String(s || '').replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
+                const startToken = start_date ? sanitize(start_date) : '';
+                const mtToken = moving_time ? Math.round(moving_time) : 0;
+                const uniqueId = sanitize(`${athleteId || athleteName}_${Math.round(distance)}_${mtToken}${startToken ? '_' + startToken : ''}`);
                 batch.set(db.collection('raw_activities').doc(uniqueId), activityDoc, { merge: true });
               }
 
