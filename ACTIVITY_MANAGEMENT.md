@@ -113,6 +113,8 @@ athlete_id,athlete_name,distance,moving_time,start_date,type,name,elevation_gain
    - All manual activities
    - Previously stored activities
 
+Note: The aggregation process is non-destructive — it will not delete or replace existing `raw_activities` documents unless there is a definitive match (for example the Strava activity id or an exact athlete+start_date match). Fuzzy/near matches will NOT be used to overwrite stored records; instead aggregation appends new records so duplicates are preserved and no data is lost.
+
 ## API Endpoints
 
 ### Get Activities

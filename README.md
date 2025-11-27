@@ -46,7 +46,8 @@ Frontend
 
 Populate aggregated data
 
-	- The backend exposes POST /aggregate/weekly which will iterate stored athletes and fetch their activities from Strava for the last 7 days and write to Firestore `activities` collection (and save summary athlete records in `summary_athletes`).
+	- The backend exposes POST /aggregate/weekly which will iterate stored athletes and fetch their activities from Strava for the last 7 days and write to Firestore `activities` collection (and save summary athlete records in `summary_athletes`). This aggregation step produces a cached leaderboard used by the frontend — the frontend reads the pre-computed `activities` documents instead of recomputing from raw_activities on every page load so the leaderboard is fast.
+	- Important: aggregation stores raw activity documents in `raw_activities` in an append-only fashion. The aggregator will only update an existing `raw_activities` document when there is a definitive match (for example the Strava activity id or an exact athlete+start_date match). For fuzzy/near matches aggregation will not overwrite or replace existing documents — it will create new documents instead to preserve duplicates and avoid accidental data loss.
 	- Call it manually (e.g. using curl or Postman) or wire it to a scheduler (Cloud Functions, cron, GitHub Actions).
 
 Notes
