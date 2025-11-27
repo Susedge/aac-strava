@@ -1,0 +1,10 @@
+const fs = require('fs');
+const pr = JSON.parse(fs.readFileSync('raw_activities.pruned_normalized.json','utf8')).raw_activities;
+const ex = JSON.parse(fs.readFileSync('raw_activities_export_2025-11-27T14-30-53-547Z.json','utf8')).raw_activities;
+const inc = pr.find(x=>x.id==='Aljohn_E__1132');
+console.log('incoming id', inc && inc.id);
+console.log('incoming athlete', inc && inc.athlete_name, 'distance', inc && inc.distance, 'moving_time', inc && inc.moving_time, 'elapsed', inc && inc.elapsed_time);
+const cand = ex.find(x=>x.id && x.id.indexOf('Aljohn_E_1132')===0);
+console.log('candidate id', cand && cand.id);
+console.log('candidate athlete', cand && cand.athlete_name, 'distance', cand && cand.distance, 'moving_time', cand && cand.moving_time, 'elapsed', cand && cand.elapsed_time);
+process.exit(0);

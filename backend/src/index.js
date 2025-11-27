@@ -578,6 +578,39 @@ app.post('/aggregate/weekly', async (req, res) => {
 
                   if (!q || q.empty) return null;
 
+                  // New: prefer a very targeted match when searching by athlete_name.
+                  // If the candidate already matches athlete_name and the numeric fields
+                  // distance, elapsed_time and moving_time are within strict tolerances,
+                  // treat it as a definitive match (helps avoid document duplication).
+                  if (byAthleteName) {
+                    for (const cand of q.docs) {
+                      const d = cand.data();
+                      // quick sanity checks
+                      const candName = (d.athlete_name || '').toString().trim().toLowerCase();
+                      const wantName = String(byAthleteName || '').trim().toLowerCase();
+                      if (!candName || !wantName || candName !== wantName) continue;
+
+                      const candDist = Number(d.distance || 0);
+                      const candMt = Number(d.moving_time || 0);
+                      // treat elapsed_time as optional: only compare if both sides provide a value
+                      const candElapsed = d.hasOwnProperty('elapsed_time') && d.elapsed_time !== null ? Number(d.elapsed_time) : null;
+                      const incDist = Number(distanceVal || 0);
+                      const incMt = Number(movingTimeVal || 0);
+                      const incElapsedExists = typeof elapsedVal !== 'undefined' && elapsedVal !== null;
+
+                      const distStrict = Math.abs(candDist - incDist) <= DISTANCE_TOLERANCE_STRICT || (Math.abs(candDist - incDist) / Math.max(1, Math.max(Math.abs(candDist), Math.abs(incDist)))) <= DISTANCE_TOLERANCE_REL;
+                      const mtStrict = Math.abs(candMt - incMt) <= MT_TOLERANCE_STRICT;
+                      let elapsedStrict = true;
+                      if (incElapsedExists && candElapsed !== null) {
+                        elapsedStrict = Math.abs(candElapsed - Number(elapsedVal)) <= MT_TOLERANCE_STRICT;
+                      }
+
+                      if (distStrict && mtStrict && elapsedStrict) {
+                        return { ref: cand.ref, type: 'athlete_name_numeric_match' };
+                      }
+                    }
+                  }
+
                   for (const cand of q.docs) {
                     const d = cand.data();
 
