@@ -552,6 +552,122 @@ export default function Admin(){
     }
   }
 
+  // NOTE: These helper actions live inside the component so they have access to
+  // component state (setAdminBusy, setAdminBusyMsg, etc). They used to be
+  // declared after the component and therefore couldn't reference state.
+  async function handlePreviewCleanup(){
+    if (!confirm('This will preview which duplicate records WOULD be removed (dry-run). Continue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Previewing duplicates…')
+      const res = await fetch(`${API}/admin/cleanup-raw-activities?dry_run=1`, { method: 'POST' })
+      if (!res.ok) throw new Error('Preview failed')
+      const j = await res.json()
+      if (!j || !Array.isArray(j.preview)) return alert('No preview data returned')
+      // Summarize preview — report counts and show up to 5 groups
+      const totalCandidates = j.deleted || 0
+      const keep = j.kept || 0
+      const summary = [`Preview mode: ${j.preview.length} groups with duplicates found`, `Would delete ${totalCandidates} documents, keep ${keep}`]
+      j.preview.slice(0,5).forEach(g => summary.push(`Group key: ${g.key} keep: ${g.keep} delete: ${g.deletes.join(', ')}`))
+      if (j.preview.length > 5) summary.push(`...and ${j.preview.length-5} more groups`)
+      alert(summary.join('\n\n'))
+    }catch(e){
+      console.error('Preview failed', e)
+      alert('Preview error: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
+  async function handleExportRawActivities(){
+    if (!confirm('This will download a combined JSON export of raw_activities and raw_activities_backup. Continue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Exporting activities…')
+      // request download response and stream blob
+      const res = await fetch(`${API}/admin/export-raw-activities?download=1`, { method: 'GET' })
+      if (!res.ok) throw new Error('Export failed')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.style.display = 'none'
+      a.href = url
+      const name = `raw_activities_export_${new Date().toISOString().replace(/[:.]/g,'-')}.json`
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    }catch(e){
+      console.error('Export failed', e)
+      alert('Export error: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
+  async function handlePreviewNormalize(){
+    if (!confirm('Preview normalization of raw_activities (dry-run). Continue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Previewing normalize…')
+      const res = await fetch(`${API}/admin/normalize-raw-activities?dry_run=1`, { method: 'POST' })
+      if (!res.ok) throw new Error('Preview failed')
+      const j = await res.json()
+      if (!j) return alert('Preview returned no data')
+      alert(`Total docs: ${j.total || 0}\nCandidates to update: ${j.count || 0}\nSample: see console`)
+      console.log('normalize preview:', j.candidates || [])
+    }catch(e){
+      console.error('Preview failed', e)
+      alert('Preview failed: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
+  async function handleNormalize(){
+    if (!confirm('This will first prune a specific duplicate group from raw_activities (remove ~192 docs) then normalize the remaining documents. Continue?')) return
+
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Pruning specific duplicate group…')
+
+      // Attempt prune step first. Server should implement the prune handler.
+      const pruneRes = await fetch(`${API}/admin/prune-raw-activities-192`, {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({ dry_run: false, create_backup: true })
+      })
+
+      if (!pruneRes.ok) {
+        const body = await pruneRes.text().catch(()=>null)
+        throw new Error(`Prune failed: ${pruneRes.status} ${body || ''}`)
+      }
+
+      const pruneJson = await pruneRes.json().catch(()=>({}));
+      const deleted = pruneJson.deleted || pruneJson.removed || 0
+      setAdminBusyMsg(`Pruned ${deleted} documents — now normalizing…`)
+
+      // Now run the standard normalize request
+      const normRes = await fetch(`${API}/admin/normalize-raw-activities`, { method: 'POST' })
+      if (!normRes.ok) throw new Error('Normalize failed')
+      const j = await normRes.json()
+
+      alert(`Prune complete (removed ${deleted} docs). Normalizing complete. Updated ${j.normalized || 0}/${j.total || 0} documents.`)
+      await loadActivities(true)
+
+    }catch(e){
+      console.error('Normalize (with prune) failed', e)
+      alert('Normalize failed: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
 
   return (
     <div className="admin-page admin-card">
@@ -894,126 +1010,3 @@ export default function Admin(){
     </div>
   )
 }
-
-  async function handlePreviewCleanup(){
-    if (!confirm('This will preview which duplicate records WOULD be removed (dry-run). Continue?')) return
-    try{
-      setAdminBusy(true)
-      setAdminBusyMsg('Previewing duplicates…')
-      const res = await fetch(`${API}/admin/cleanup-raw-activities?dry_run=1`, { method: 'POST' })
-      if (!res.ok) throw new Error('Preview failed')
-      const j = await res.json()
-      if (!j || !Array.isArray(j.preview)) return alert('No preview data returned')
-      // Summarize preview — report counts and show up to 5 groups
-      const totalCandidates = j.deleted || 0
-      const keep = j.kept || 0
-      const summary = [`Preview mode: ${j.preview.length} groups with duplicates found`, `Would delete ${totalCandidates} documents, keep ${keep}`]
-      j.preview.slice(0,5).forEach(g => summary.push(`Group key: ${g.key} keep: ${g.keep} delete: ${g.deletes.join(', ')}`))
-      if (j.preview.length > 5) summary.push(`...and ${j.preview.length-5} more groups`)
-      alert(summary.join('\n\n'))
-    }catch(e){
-      console.error('Preview failed', e)
-      alert('Preview error: ' + e.message)
-    }finally{
-      setAdminBusy(false)
-      setAdminBusyMsg('')
-    }
-  }
-
-  async function handleExportRawActivities(){
-    if (!confirm('This will download a combined JSON export of raw_activities and raw_activities_backup. Continue?')) return
-    try{
-      setAdminBusy(true)
-      setAdminBusyMsg('Exporting activities…')
-      // request download response and stream blob
-      const res = await fetch(`${API}/admin/export-raw-activities?download=1`, { method: 'GET' })
-      if (!res.ok) throw new Error('Export failed')
-      const blob = await res.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.style.display = 'none'
-      a.href = url
-      const name = `raw_activities_export_${new Date().toISOString().replace(/[:.]/g,'-')}.json`
-      a.download = name
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      window.URL.revokeObjectURL(url)
-    }catch(e){
-      console.error('Export failed', e)
-      alert('Export error: ' + e.message)
-    }finally{
-      setAdminBusy(false)
-      setAdminBusyMsg('')
-    }
-  }
-
-  async function handlePreviewNormalize(){
-    if (!confirm('Preview normalization of raw_activities (dry-run). Continue?')) return
-    try{
-      setAdminBusy(true)
-      setAdminBusyMsg('Previewing normalize…')
-      const res = await fetch(`${API}/admin/normalize-raw-activities?dry_run=1`, { method: 'POST' })
-      if (!res.ok) throw new Error('Preview failed')
-      const j = await res.json()
-      if (!j) return alert('Preview returned no data')
-      alert(`Total docs: ${j.total || 0}\nCandidates to update: ${j.count || 0}\nSample: see console`)
-      console.log('normalize preview:', j.candidates || [])
-    }catch(e){
-      console.error('Preview failed', e)
-      alert('Preview failed: ' + e.message)
-    }finally{
-      setAdminBusy(false)
-      setAdminBusyMsg('')
-    }
-  }
-
-  async function handleNormalize(){
-    /*
-      New flow: 1) confirm with user, 2) prune the 192-group (server endpoint),
-      3) normalize remaining records.
-
-      Note: this adds a call to `/admin/prune-raw-activities` (POST).
-      The endpoint should accept { dry_run: false } and return a JSON object
-      with a `deleted` count (or similar). If the endpoint doesn't exist on
-      the server yet, this call will fail — the UI will show an error.
-    */
-
-    if (!confirm('This will first prune a specific duplicate group from raw_activities (remove ~192 docs) then normalize the remaining documents. Continue?')) return
-
-    try{
-      setAdminBusy(true)
-      setAdminBusyMsg('Pruning specific duplicate group…')
-
-      // Attempt prune step first. Server should implement the prune handler.
-      const pruneRes = await fetch(`${API}/admin/prune-raw-activities-192`, {
-        method: 'POST',
-        headers: {'content-type': 'application/json'},
-        body: JSON.stringify({ dry_run: false, create_backup: true })
-      })
-
-      if (!pruneRes.ok) {
-        const body = await pruneRes.text().catch(()=>null)
-        throw new Error(`Prune failed: ${pruneRes.status} ${body || ''}`)
-      }
-
-      const pruneJson = await pruneRes.json().catch(()=>({}));
-      const deleted = pruneJson.deleted || pruneJson.removed || 0
-      setAdminBusyMsg(`Pruned ${deleted} documents — now normalizing…`)
-
-      // Now run the standard normalize request
-      const normRes = await fetch(`${API}/admin/normalize-raw-activities`, { method: 'POST' })
-      if (!normRes.ok) throw new Error('Normalize failed')
-      const j = await normRes.json()
-
-      alert(`Prune complete (removed ${deleted} docs). Normalizing complete. Updated ${j.normalized || 0}/${j.total || 0} documents.`)
-      await loadActivities(true)
-
-    }catch(e){
-      console.error('Normalize (with prune) failed', e)
-      alert('Normalize failed: ' + e.message)
-    }finally{
-      setAdminBusy(false)
-      setAdminBusyMsg('')
-    }
-  }
