@@ -543,26 +543,26 @@ app.post('/aggregate/weekly', async (req, res) => {
                 // set of candidate docs by athlete_id or athlete_name then compare in-app
                 // using tolerances for distance and moving_time and proximity for start_date.
                 const findFuzzyMatch = async ({ byAthleteId, byAthleteName, distanceVal, movingTimeVal, startDateVal, nameVal, elevationVal, elapsedVal, stravaIdVal, typeVal, sportTypeVal, workoutTypeVal, athleteResourceState }) => {
-                  const MAX_CANDIDATES = 50; // limit to keep it fast
+                  const MAX_CANDIDATES = 50; // keep DB query small
                   // Matching thresholds
-                  const DISTANCE_TOLERANCE_REL = 0.02; // 2% relative (used for lenient matches)
-                  const DISTANCE_TOLERANCE_STRICT = 10; // meters (strict mode)
-                  const DISTANCE_TOLERANCE_LOOSE = 50; // meters (looser fallback)
-                  const MT_TOLERANCE_STRICT = 10; // seconds (strict)
-                  const MT_TOLERANCE_LOOSE = 60; // seconds (loose)
-                  const START_DATE_TOLERANCE_MS = 2 * 60 * 1000; // 2 minutes - strong indicator
-                  const START_DATE_TOLERANCE_LOOSE_MS = 5 * 60 * 1000; // 5 minutes - weaker indicator
+                  const DISTANCE_TOLERANCE_REL = 0.02; // 2% relative
+                  const DISTANCE_TOLERANCE_STRICT = 10; // meters strict
+                  const DISTANCE_TOLERANCE_LOOSE = 50; // meters loose
+                  const MT_TOLERANCE_STRICT = 10; // seconds strict
+                  const MT_TOLERANCE_LOOSE = 60; // seconds loose
+                  const START_DATE_TOLERANCE_MS = 2 * 60 * 1000; // 2 minutes
+                  const START_DATE_TOLERANCE_LOOSE_MS = 5 * 60 * 1000; // 5 minutes
 
-                  const DISTANCE_TOLERANCE_ABS = DISTANCE_TOLERANCE_LOOSE; // absolute meters fallback
                   const withinTolerance = (a, b) => {
                     if (typeof a !== 'number' || typeof b !== 'number') return false;
                     const abs = Math.abs(a - b);
                     const rel = Math.abs(a - b) / Math.max(1, Math.max(Math.abs(a), Math.abs(b)));
-                    return abs <= DISTANCE_TOLERANCE_ABS || rel <= DISTANCE_TOLERANCE_REL;
+                    return abs <= DISTANCE_TOLERANCE_LOOSE || rel <= DISTANCE_TOLERANCE_REL;
                   };
 
+                  // Fetch candidate documents (small query) - if this fails, bail safely
+                  let q;
                   try {
-                    let q;
                     if (byAthleteId) {
                       q = await db.collection('raw_activities').where('athlete_id', '==', byAthleteId).limit(MAX_CANDIDATES).get();
                     } else if (byAthleteName) {
@@ -570,108 +570,99 @@ app.post('/aggregate/weekly', async (req, res) => {
                     } else {
                       return null;
                     }
-
-                    if (!q || q.empty) return null;
-
-                    // iterate candidates and pick the first close match
-                    for (const cand of q.docs) {
-                      const d = cand.data();
-                      // If incoming included a Strava activity id and this candidate has the same id,
-                      // treat that as a definitive match and return immediately.
-                      if (stravaIdVal && d.strava_id && String(d.strava_id) === String(stravaIdVal)) return { ref: cand.ref, type: 'strava_id' };
-                      // If both records have a start_date, prefer that as a strong indicator
-                      if (d.start_date && startDateVal) {
-                        try {
-                          const candMs = new Date(String(d.start_date)).getTime();
-                          const curMs = new Date(String(startDateVal)).getTime();
-                          if (!Number.isNaN(candMs) && !Number.isNaN(curMs)) {
-                            const delta = Math.abs(candMs - curMs);
-                            // If within the strong window, treat as same activity
-                            if (delta <= START_DATE_TOLERANCE_MS) {
-                              return { ref: cand.ref, type: 'start_date_strict' };
-                            }
-                            // If within a looser window we allow a secondary check (distance+mt strict)
-                            if (delta <= START_DATE_TOLERANCE_LOOSE_MS) {
-                              const candDist = Number(d.distance || 0);
-                              const candMt = Number(d.moving_time || 0);
-                              const candElapsed = Number(d.elapsed_time || 0);
-                              const incElapsed = Number(elapsedVal || 0);
-                              const distLoose = Math.abs(candDist - Number(distanceVal || 0)) <= DISTANCE_TOLERANCE_LOOSE || (Math.abs(candDist - Number(distanceVal || 0)) / Math.max(1, Math.max(Math.abs(candDist), Math.abs(Number(distanceVal || 0))))) <= DISTANCE_TOLERANCE_REL;
-                              const mtLoose = Math.abs(candMt - Number(movingTimeVal || 0)) <= MT_TOLERANCE_LOOSE || (incElapsed && Math.abs(candElapsed - incElapsed) <= MT_TOLERANCE_LOOSE);
-                              if (distLoose && mtLoose) return { ref: cand.ref, type: 'start_date_loose' };
-                            }
-                            // If start dates are present on both records but outside the loose window,
-                            // they are unlikely to be the same activity - skip candidate.
-                            if (delta > START_DATE_TOLERANCE_LOOSE_MS) continue;
-                            }
-                          }
-                        } catch (err) { /* ignore bad dates */ }
-                      }
-
-                      // If we don't have start_date info on both sides, require strict checks to avoid
-                      // merging distinct activities. The system will only match when both distance and
-                      // moving_time are very close (strict) AND either activity name or elevation is similar.
-                      const candDist = Number(d.distance || 0);
-                      const candMt = Number(d.moving_time || 0);
-                      const candElapsed = Number(d.elapsed_time || 0);
-                      const incElapsed = Number(elapsedVal || 0);
-                    // strict numeric checks
-                    const distStrict = Math.abs(candDist - Number(distanceVal || 0)) <= DISTANCE_TOLERANCE_STRICT || (Math.abs(candDist - Number(distanceVal || 0)) / Math.max(1, Math.max(Math.abs(candDist), Math.abs(Number(distanceVal || 0))))) <= DISTANCE_TOLERANCE_REL;
-                      const mtStrict = Math.abs(candMt - Number(movingTimeVal || 0)) <= MT_TOLERANCE_STRICT || (incElapsed && Math.abs(candElapsed - incElapsed) <= MT_TOLERANCE_STRICT);
-
-                      if (distStrict && mtStrict) {
-                        // Collect additional fields to score the candidate
-                        const candName = (d.name || '').toString().trim().toLowerCase();
-                        const incName = (nameVal || '').toString().trim().toLowerCase();
-                        const nameMatch = candName && incName && candName === incName;
-                        const candType = (d.type || '').toString().trim().toLowerCase();
-                        const candSportType = (d.sport_type || '').toString().trim().toLowerCase();
-                        const candWorkoutType = typeof d.workout_type !== 'undefined' ? String(d.workout_type) : null;
-                        const typeMatch = candType && typeVal && candType === String(typeVal).toLowerCase();
-                        const sportTypeMatch = candSportType && sportTypeVal && candSportType === String(sportTypeVal).toLowerCase();
-                        const workoutTypeMatch = (typeof d.workout_type !== 'undefined' && typeof workoutTypeVal !== 'undefined') && String(d.workout_type) === String(workoutTypeVal);
-                        const candEg = Number(d.elevation_gain || d.total_elevation_gain || 0);
-                        const incEg = Number(elevationVal || 0);
-                        const elevMatch = Number.isFinite(candEg) && Math.abs(candEg - incEg) <= 5; // 5 meters allowance
-                        const incElapsed = Number(elapsedVal || 0);
-                        const elapsedMatch = incElapsed && candElapsed && Math.abs(candElapsed - incElapsed) <= MT_TOLERANCE_STRICT;
-
-                        // Score: name (3), distance (2), moving/elapsed (2), type/sport/workout (1 each), elevation (1)
-                        let score = 0;
-                        if (nameMatch) score += 3;
-                        if (distStrict) score += 2;
-                        if (mtStrict) score += 2;
-                        if (typeMatch) score += 1;
-                        if (sportTypeMatch) score += 1;
-                        if (workoutTypeMatch) score += 1;
-                        if (elevMatch) score += 1;
-                        if (elapsedMatch) score += 1;
-
-                        // Conservative policy: require a strong signal (name or elapsed time)
-                        // before declaring a numeric-only match - elevation by itself is NOT
-                        // considered a sufficient tiebreaker to avoid collapsing distinct
-                        // activities with similar distances.
-                        if (score >= 6 && (nameMatch || elapsedMatch)) return { ref: cand.ref, type: 'strict_numeric_full' };
-                        // Medium-confidence numeric match: require name or elapsed as tiebreaker
-                        if (score >= 4 && (nameMatch || elapsedMatch)) return { ref: cand.ref, type: 'strict_numeric' };
-                      }
-
-                      // As a final very cautious fallback, allow looser numeric match only when both
-                      // distance and moving_time are within loose tolerances AND there is no start_date
-                      // on either side (very rare) — but we prefer not to match in ambiguous cases.
-                      const distLoose = Math.abs(candDist - Number(distanceVal || 0)) <= DISTANCE_TOLERANCE_LOOSE || (Math.abs(candDist - Number(distanceVal || 0)) / Math.max(1, Math.max(Math.abs(candDist), Math.abs(Number(distanceVal || 0))))) <= DISTANCE_TOLERANCE_REL;
-                      const mtLoose = Math.abs(candMt - Number(movingTimeVal || 0)) <= MT_TOLERANCE_LOOSE;
-                      if (!d.start_date && !startDateVal && distLoose && mtLoose) {
-                        // still cautious — only match if both numeric loose checks pass and candidate shares source
-                        if (d.source && d.source === 'strava_api') return { ref: cand.ref, type: 'loose_fallback' };
-                      }
-                    }
-
-                    return null;
                   } catch (err) {
                     console.warn('Fuzzy match query failed', err && err.message || err);
                     return null;
                   }
+
+                  if (!q || q.empty) return null;
+
+                  for (const cand of q.docs) {
+                    const d = cand.data();
+
+                    // Definitive match by Strava ID
+                    if (stravaIdVal && d.strava_id && String(d.strava_id) === String(stravaIdVal)) return { ref: cand.ref, type: 'strava_id' };
+
+                    // Prefer start_date as a strong indicator when available
+                    if (d.start_date && startDateVal) {
+                      try {
+                        const candMs = new Date(String(d.start_date)).getTime();
+                        const curMs = new Date(String(startDateVal)).getTime();
+                        if (!Number.isNaN(candMs) && !Number.isNaN(curMs)) {
+                          const delta = Math.abs(candMs - curMs);
+                          if (delta <= START_DATE_TOLERANCE_MS) return { ref: cand.ref, type: 'start_date_strict' };
+
+                          if (delta <= START_DATE_TOLERANCE_LOOSE_MS) {
+                            const candDist = Number(d.distance || 0);
+                            const candMt = Number(d.moving_time || 0);
+                            const candElapsed = Number(d.elapsed_time || 0);
+                            const incElapsed = Number(elapsedVal || 0);
+                            const distLoose = Math.abs(candDist - Number(distanceVal || 0)) <= DISTANCE_TOLERANCE_LOOSE || (Math.abs(candDist - Number(distanceVal || 0)) / Math.max(1, Math.max(Math.abs(candDist), Math.abs(Number(distanceVal || 0))))) <= DISTANCE_TOLERANCE_REL;
+                            const mtLoose = Math.abs(candMt - Number(movingTimeVal || 0)) <= MT_TOLERANCE_LOOSE || (incElapsed && Math.abs(candElapsed - incElapsed) <= MT_TOLERANCE_LOOSE);
+                            if (distLoose && mtLoose) return { ref: cand.ref, type: 'start_date_loose' };
+                          }
+
+                          // If start dates exist on both sides but are outside the loose window,
+                          // they are unlikely to be the same activity.
+                          if (delta > START_DATE_TOLERANCE_LOOSE_MS) continue;
+                        }
+                      } catch (dateErr) {
+                        // ignore bad dates and continue trying other candidates
+                      }
+                    }
+
+                    // Strict numeric checks (distance + moving_time close)
+                    const candDist = Number(d.distance || 0);
+                    const candMt = Number(d.moving_time || 0);
+                    const candElapsed = Number(d.elapsed_time || 0);
+                    const incElapsed = Number(elapsedVal || 0);
+
+                    const distStrict = Math.abs(candDist - Number(distanceVal || 0)) <= DISTANCE_TOLERANCE_STRICT || (Math.abs(candDist - Number(distanceVal || 0)) / Math.max(1, Math.max(Math.abs(candDist), Math.abs(Number(distanceVal || 0))))) <= DISTANCE_TOLERANCE_REL;
+                    const mtStrict = Math.abs(candMt - Number(movingTimeVal || 0)) <= MT_TOLERANCE_STRICT || (incElapsed && Math.abs(candElapsed - incElapsed) <= MT_TOLERANCE_STRICT);
+
+                    if (distStrict && mtStrict) {
+                      const candName = (d.name || '').toString().trim().toLowerCase();
+                      const incName = (nameVal || '').toString().trim().toLowerCase();
+                      const nameMatch = candName && incName && candName === incName;
+
+                      const candType = (d.type || '').toString().trim().toLowerCase();
+                      const candSportType = (d.sport_type || '').toString().trim().toLowerCase();
+                      const candWorkoutType = typeof d.workout_type !== 'undefined' ? String(d.workout_type) : null;
+                      const typeMatch = candType && typeVal && candType === String(typeVal).toLowerCase();
+                      const sportTypeMatch = candSportType && sportTypeVal && candSportType === String(sportTypeVal).toLowerCase();
+                      const workoutTypeMatch = (typeof d.workout_type !== 'undefined' && typeof workoutTypeVal !== 'undefined') && String(d.workout_type) === String(workoutTypeVal);
+
+                      const candEg = Number(d.elevation_gain || d.total_elevation_gain || 0);
+                      const incEg = Number(elevationVal || 0);
+                      const elevMatch = Number.isFinite(candEg) && Math.abs(candEg - incEg) <= 5;
+
+                      const elapsedMatch = incElapsed && candElapsed && Math.abs(candElapsed - incElapsed) <= MT_TOLERANCE_STRICT;
+
+                      // Score components
+                      let score = 0;
+                      if (nameMatch) score += 3;
+                      if (distStrict) score += 2;
+                      if (mtStrict) score += 2;
+                      if (typeMatch) score += 1;
+                      if (sportTypeMatch) score += 1;
+                      if (workoutTypeMatch) score += 1;
+                      if (elevMatch) score += 1;
+                      if (elapsedMatch) score += 1;
+
+                      // Conservative match decisions — require name or elapsed to be present for numeric matches
+                      if (score >= 6 && (nameMatch || elapsedMatch)) return { ref: cand.ref, type: 'strict_numeric_full' };
+                      if (score >= 4 && (nameMatch || elapsedMatch)) return { ref: cand.ref, type: 'strict_numeric' };
+                    }
+
+                    // Final very cautious loose fallback: only when no start_date on either side
+                    const distLoose = Math.abs(candDist - Number(distanceVal || 0)) <= DISTANCE_TOLERANCE_LOOSE || (Math.abs(candDist - Number(distanceVal || 0)) / Math.max(1, Math.max(Math.abs(candDist), Math.abs(Number(distanceVal || 0))))) <= DISTANCE_TOLERANCE_REL;
+                    const mtLoose = Math.abs(candMt - Number(movingTimeVal || 0)) <= MT_TOLERANCE_LOOSE;
+                    if (!d.start_date && !startDateVal && distLoose && mtLoose) {
+                      if (d.source && d.source === 'strava_api') return { ref: cand.ref, type: 'loose_fallback' };
+                    }
+                  }
+
+                  return null;
                 };
 
                 // Try fuzzy match by athlete_id first
