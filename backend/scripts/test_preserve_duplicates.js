@@ -4,7 +4,7 @@
 function sanitize(s) { return String(s || '').replace(/[^a-zA-Z0-9_-]/g,'_').replace(/_+/g, '_'); }
 
 // Reuse matching logic from test_fuzzy_matching (lightweight copy)
-function findFuzzyMatchInArray(candidates, {distanceVal, movingTimeVal, startDateVal, nameVal, elevationVal, elapsedVal, stravaIdVal}) {
+function findFuzzyMatchInArray(candidates, {distanceVal, movingTimeVal, startDateVal, nameVal, elevationVal, elapsedVal, stravaIdVal, typeVal, sportTypeVal, workoutTypeVal, athleteResourceState}) {
   const MAX_CANDIDATES = 50;
   const DISTANCE_TOLERANCE_ABS = 50; // meters
   const DISTANCE_TOLERANCE_REL = 0.03; // 3%
@@ -38,6 +38,7 @@ function findFuzzyMatchInArray(candidates, {distanceVal, movingTimeVal, startDat
         const mtLoose = Math.abs(candMt - Number(movingTimeVal || 0)) <= 60 || (incElapsed && Math.abs(candElapsed - incElapsed) <= 60);
         if (distLoose && mtLoose) return { matched: true, doc: d, type: 'start_date_loose' };
       }
+      if (candMs && Math.abs(candMs - curMs) > START_DATE_TOLERANCE_LOOSE_MS) continue;
     }
 
     const candDist = Number(d.distance || 0);
@@ -50,10 +51,28 @@ function findFuzzyMatchInArray(candidates, {distanceVal, movingTimeVal, startDat
       const candName = (d.name || '').toString().trim().toLowerCase();
       const incName = (nameVal || '').toString().trim().toLowerCase();
       const nameMatch = candName && incName && candName === incName;
+      const candType = (d.type || '').toString().trim().toLowerCase();
+      const typeMatch = candType && typeVal && candType === String(typeVal).toLowerCase();
+      const candSportType = (d.sport_type || '').toString().trim().toLowerCase();
+      const sportMatch = candSportType && sportTypeVal && candSportType === String(sportTypeVal).toLowerCase();
+      const candWorkoutType = typeof d.workout_type !== 'undefined' ? String(d.workout_type) : null;
+      const workoutMatch = (typeof d.workout_type !== 'undefined' && typeof workoutTypeVal !== 'undefined') && String(d.workout_type) === String(workoutTypeVal);
       const candEg = Number(d.elevation_gain || d.total_elevation_gain || 0);
       const incEg = Number(elevationVal || 0);
       const elevMatch = Number.isFinite(candEg) && Math.abs(candEg - incEg) <= 5;
-      if (nameMatch || elevMatch) return { matched: true, doc: d, type: 'strict_numeric' };
+      const incElapsed = Number(elapsedVal || 0);
+      const elapsedMatch = incElapsed && candElapsed && Math.abs(candElapsed - incElapsed) <= 10;
+      let score = 0;
+      if (nameMatch) score += 3;
+      if (distStrict) score += 2;
+      if (mtStrict) score += 2;
+      if (typeMatch) score += 1;
+      if (sportMatch) score += 1;
+      if (workoutMatch) score += 1;
+      if (elevMatch) score += 1;
+      if (elapsedMatch) score += 1;
+      if (score >= 6) return { matched: true, doc: d, type: 'strict_numeric_full' };
+      if (score >= 4) return { matched: true, doc: d, type: 'strict_numeric' };
     }
   }
   return { matched: false };
@@ -61,15 +80,17 @@ function findFuzzyMatchInArray(candidates, {distanceVal, movingTimeVal, startDat
 
 // Simulated stored docs
 const stored = [
-  { id: 'str_111', athlete_id: '100', distance: 4000, moving_time: 1200, name: 'Special Run', strava_id: '111', start_date: '2025-11-01T05:00:00Z' },
-  { id: 's1', athlete_id: '100', distance: 5000, moving_time: 1500, name: 'Morning Run', start_date: '2025-11-01T06:00:00Z' },
-  { id: 's2', athlete_id: '100', distance: 5000, moving_time: 1500, name: 'Morning Run' }
+  { id: 'str_111', resource_state: 2, athlete: { resource_state: 2, firstname: 'Alice', lastname: 'A.' }, athlete_id: '100', distance: 4000, moving_time: 1200, elapsed_time: 1210, name: 'Special Run', strava_id: '111', start_date: '2025-11-01T05:00:00Z', total_elevation_gain: 5, type: 'Run', sport_type: 'Run', workout_type: null },
+  { id: 's1', resource_state: 2, athlete: { resource_state: 2, firstname: 'Alice', lastname: 'A.' }, athlete_id: '100', distance: 5000, moving_time: 1500, elapsed_time: 1510, name: 'Morning Run', start_date: '2025-11-01T06:00:00Z', total_elevation_gain: 10, type: 'Run', sport_type: 'Run', workout_type: null },
+  // stored earlier '50 left' activity (newer) which should not cause older '82 left' to be merged
+  { id: 's50', resource_state: 2, athlete: { resource_state: 2, firstname: 'k1LLu4', lastname: 'Z.' }, athlete_id: '100', distance: 3170.7, moving_time: 2303, elapsed_time: 2780, name: '50 left', start_date: '2025-11-02T06:00:00Z', total_elevation_gain: 3.3, type: 'Run', sport_type: 'Run', workout_type: null },
+  { id: 's2', resource_state: 2, athlete: { resource_state: 2, firstname: 'Alice', lastname: 'A.' }, athlete_id: '100', distance: 5000, moving_time: 1500, elapsed_time: 1510, name: 'Morning Run' }
 ];
 
 function storeIncoming(incoming) {
   // find candidates by athleteId or name
   const candidates = incoming.athleteId ? stored.filter(s=>s.athlete_id === incoming.athleteId) : (incoming.athleteName ? stored.filter(s => String(s.athlete_name||'').toLowerCase() === String(incoming.athleteName||'').toLowerCase()) : []);
-  const found = candidates.length ? findFuzzyMatchInArray(candidates, { distanceVal: incoming.distance, movingTimeVal: incoming.moving_time, startDateVal: incoming.start_date, nameVal: incoming.name, elevationVal: incoming.elevation_gain, elapsedVal: incoming.elapsed_time, stravaIdVal: incoming.strava_id }) : { matched: false };
+  const found = candidates.length ? findFuzzyMatchInArray(candidates, { distanceVal: incoming.distance, movingTimeVal: incoming.moving_time, startDateVal: incoming.start_date, nameVal: incoming.name, elevationVal: incoming.elevation_gain, elapsedVal: incoming.elapsed_time, stravaIdVal: incoming.strava_id, typeVal: incoming.type, sportTypeVal: incoming.sport_type, workoutTypeVal: incoming.workout_type, athleteResourceState: incoming.athlete && incoming.athlete.resource_state }) : { matched: false };
 
   // storage decision: only update when match type is 'strava_id' or 'start_date_strict'
   const allowedUpdate = ['strava_id','start_date_strict'];
@@ -88,6 +109,8 @@ const tests = [
   { name: 'Strava id match updates', incoming: { athleteId: '100', distance: 3990, moving_time: 1210, strava_id: '111' }, expectAction: 'update', expectedTarget: 'str_111' },
   { name: 'Exact start_date match updates', incoming: { athleteId: '100', distance: 5002, moving_time: 1498, start_date: '2025-11-01T06:00:00Z' }, expectAction: 'update', expectedTarget: 's1' },
   { name: 'Strict numeric but fuzzy should NOT overwrite', incoming: { athleteId: '100', distance: 5003, moving_time: 1496, name: 'Morning Run' }, expectAction: 'create' }
+  ,
+  { name: "82 left shouldn't be treated as duplicate of 50 left", incoming: { athleteId: '100', distance: 3109.5, moving_time: 2121, elapsed_time: 2639, name: '82 left' }, expectAction: 'create' }
 ];
 
 let passed = 0;

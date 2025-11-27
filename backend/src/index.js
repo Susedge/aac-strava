@@ -478,6 +478,10 @@ app.post('/aggregate/weekly', async (req, res) => {
                 // Include start_date when available so edits on Strava (which update start_date)
                 // can be matched and merged instead of creating a new record.
                 ...(start_date ? { start_date } : {}),
+                // Include elapsed_time, sport_type and workout metadata when available
+                ...(typeof act.elapsed_time !== 'undefined' ? { elapsed_time: Number(act.elapsed_time || 0) } : {}),
+                ...(act.sport_type ? { sport_type: act.sport_type } : {}),
+                ...(typeof act.workout_type !== 'undefined' ? { workout_type: act.workout_type } : {}),
                 type: act.type || 'Run',
                 name: act.name || 'Activity',
                 elevation_gain: Number(act.total_elevation_gain || act.elev_total || 0),
@@ -538,7 +542,7 @@ app.post('/aggregate/weekly', async (req, res) => {
                 // Firestore range queries across multiple fields are limited, so fetch a small
                 // set of candidate docs by athlete_id or athlete_name then compare in-app
                 // using tolerances for distance and moving_time and proximity for start_date.
-                const findFuzzyMatch = async ({ byAthleteId, byAthleteName, distanceVal, movingTimeVal, startDateVal, nameVal, elevationVal, elapsedVal, stravaIdVal }) => {
+                const findFuzzyMatch = async ({ byAthleteId, byAthleteName, distanceVal, movingTimeVal, startDateVal, nameVal, elevationVal, elapsedVal, stravaIdVal, typeVal, sportTypeVal, workoutTypeVal, athleteResourceState }) => {
                   const MAX_CANDIDATES = 50; // limit to keep it fast
                   // Matching thresholds
                   const DISTANCE_TOLERANCE_REL = 0.02; // 2% relative (used for lenient matches)
@@ -596,6 +600,10 @@ app.post('/aggregate/weekly', async (req, res) => {
                               const mtLoose = Math.abs(candMt - Number(movingTimeVal || 0)) <= MT_TOLERANCE_LOOSE || (incElapsed && Math.abs(candElapsed - incElapsed) <= MT_TOLERANCE_LOOSE);
                               if (distLoose && mtLoose) return { ref: cand.ref, type: 'start_date_loose' };
                             }
+                            // If start dates are present on both records but outside the loose window,
+                            // they are unlikely to be the same activity - skip candidate.
+                            if (delta > START_DATE_TOLERANCE_LOOSE_MS) continue;
+                            }
                           }
                         } catch (err) { /* ignore bad dates */ }
                       }
@@ -612,16 +620,40 @@ app.post('/aggregate/weekly', async (req, res) => {
                       const mtStrict = Math.abs(candMt - Number(movingTimeVal || 0)) <= MT_TOLERANCE_STRICT || (incElapsed && Math.abs(candElapsed - incElapsed) <= MT_TOLERANCE_STRICT);
 
                       if (distStrict && mtStrict) {
-                      // Check activity name similarity when available
-                      const candName = (d.name || '').toString().trim().toLowerCase();
-                      const incName = (nameVal || '').toString().trim().toLowerCase();
-                      const nameMatch = candName && incName && candName === incName;
-                      // If both docs have elevation info, compare allowed difference
-                      const candEg = Number(d.elevation_gain || d.total_elevation_gain || 0);
-                      const incEg = Number(elevationVal || 0);
-                      const elevMatch = Number.isFinite(candEg) && Math.abs(candEg - incEg) <= 5; // 5 meters allowance
-                      // Require either a name match OR elevation match to disambiguate when strict numeric matches
-                      if (nameMatch || elevMatch) return { ref: cand.ref, type: 'strict_numeric' };
+                        // Collect additional fields to score the candidate
+                        const candName = (d.name || '').toString().trim().toLowerCase();
+                        const incName = (nameVal || '').toString().trim().toLowerCase();
+                        const nameMatch = candName && incName && candName === incName;
+                        const candType = (d.type || '').toString().trim().toLowerCase();
+                        const candSportType = (d.sport_type || '').toString().trim().toLowerCase();
+                        const candWorkoutType = typeof d.workout_type !== 'undefined' ? String(d.workout_type) : null;
+                        const typeMatch = candType && typeVal && candType === String(typeVal).toLowerCase();
+                        const sportTypeMatch = candSportType && sportTypeVal && candSportType === String(sportTypeVal).toLowerCase();
+                        const workoutTypeMatch = (typeof d.workout_type !== 'undefined' && typeof workoutTypeVal !== 'undefined') && String(d.workout_type) === String(workoutTypeVal);
+                        const candEg = Number(d.elevation_gain || d.total_elevation_gain || 0);
+                        const incEg = Number(elevationVal || 0);
+                        const elevMatch = Number.isFinite(candEg) && Math.abs(candEg - incEg) <= 5; // 5 meters allowance
+                        const incElapsed = Number(elapsedVal || 0);
+                        const elapsedMatch = incElapsed && candElapsed && Math.abs(candElapsed - incElapsed) <= MT_TOLERANCE_STRICT;
+
+                        // Score: name (3), distance (2), moving/elapsed (2), type/sport/workout (1 each), elevation (1)
+                        let score = 0;
+                        if (nameMatch) score += 3;
+                        if (distStrict) score += 2;
+                        if (mtStrict) score += 2;
+                        if (typeMatch) score += 1;
+                        if (sportTypeMatch) score += 1;
+                        if (workoutTypeMatch) score += 1;
+                        if (elevMatch) score += 1;
+                        if (elapsedMatch) score += 1;
+
+                        // Conservative policy: require a strong signal (name or elapsed time)
+                        // before declaring a numeric-only match - elevation by itself is NOT
+                        // considered a sufficient tiebreaker to avoid collapsing distinct
+                        // activities with similar distances.
+                        if (score >= 6 && (nameMatch || elapsedMatch)) return { ref: cand.ref, type: 'strict_numeric_full' };
+                        // Medium-confidence numeric match: require name or elapsed as tiebreaker
+                        if (score >= 4 && (nameMatch || elapsedMatch)) return { ref: cand.ref, type: 'strict_numeric' };
                       }
 
                       // As a final very cautious fallback, allow looser numeric match only when both
@@ -644,13 +676,13 @@ app.post('/aggregate/weekly', async (req, res) => {
 
                 // Try fuzzy match by athlete_id first
                 if (!docRef && athleteId) {
-                  const found = await findFuzzyMatch({ byAthleteId: athleteId, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date, nameVal: activityDoc.name, elevationVal: activityDoc.elevation_gain, elapsedVal: activityDoc.elapsed_time, stravaIdVal: activityDoc.strava_id });
+                  const found = await findFuzzyMatch({ byAthleteId: athleteId, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date, nameVal: activityDoc.name, elevationVal: activityDoc.elevation_gain, elapsedVal: activityDoc.elapsed_time, stravaIdVal: activityDoc.strava_id, typeVal: act.type, sportTypeVal: act.sport_type, workoutTypeVal: act.workout_type, athleteResourceState: act.athlete && act.athlete.resource_state });
                   if (found && (found.type === 'strava_id' || found.type === 'start_date_strict')) { docRef = found.ref; docMatchType = found.type; }
                 }
 
                 // Then try fuzzy match by athlete_name
                 if (!docRef && athleteName) {
-                  const found2 = await findFuzzyMatch({ byAthleteName: athleteName, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date, nameVal: activityDoc.name, elevationVal: activityDoc.elevation_gain, elapsedVal: activityDoc.elapsed_time, stravaIdVal: activityDoc.strava_id });
+                  const found2 = await findFuzzyMatch({ byAthleteName: athleteName, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date, nameVal: activityDoc.name, elevationVal: activityDoc.elevation_gain, elapsedVal: activityDoc.elapsed_time, stravaIdVal: activityDoc.strava_id, typeVal: act.type, sportTypeVal: act.sport_type, workoutTypeVal: act.workout_type, athleteResourceState: act.athlete && act.athlete.resource_state });
                   if (found2 && (found2.type === 'strava_id' || found2.type === 'start_date_strict')) { docRef = found2.ref; docMatchType = found2.type; }
                 }
               } catch (qErr) {
@@ -797,6 +829,23 @@ app.post('/aggregate/weekly', async (req, res) => {
           console.warn('Failed to update last_aggregation_at', e.message || e);
         }
 
+        // ALSO: write a leaderboard snapshot document (single doc) for fast reads by the frontend
+        try {
+          // Read current per-athlete activities docs to assemble rows
+          const actSnaps = await db.collection('activities').get();
+          const rows = actSnaps.docs.map(d => ({ id: d.id, ...d.data() }));
+          const snapshot = {
+            metadata: { aggregated_at: Date.now(), membersCount: members.length, activitiesCount: acts.length },
+            rows
+          };
+          // latest snapshot
+          await db.collection('leaderboard_snapshots').doc('latest').set(snapshot, { merge: false });
+          // timestamped archive
+          await db.collection('leaderboard_snapshots').doc(`snap_${Date.now()}`).set(snapshot, { merge: false });
+        } catch (snapErr) {
+          console.warn('Failed to write leaderboard snapshot', snapErr && snapErr.message || snapErr);
+        }
+
         return res.json({ ok: true, results, membersCount: members.length, activitiesCount: acts.length });
       } catch (err) {
         console.error('club activities fetch failed', err.response ? err.response.data : err.message);
@@ -843,6 +892,17 @@ app.post('/aggregate/weekly', async (req, res) => {
       }, { merge: true });
     } catch (e) {
       console.warn('Failed to update last_aggregation_at', e.message || e);
+    }
+
+    // ALSO: write a leaderboard snapshot for fast frontend reads (activities collection contains per-athlete docs)
+    try {
+      const actSnaps = await db.collection('activities').get();
+      const rows = actSnaps.docs.map(d => ({ id: d.id, ...d.data() }));
+      const snapshot = { metadata: { aggregated_at: Date.now(), resultsCount: rows.length }, rows };
+      await db.collection('leaderboard_snapshots').doc('latest').set(snapshot, { merge: false });
+      await db.collection('leaderboard_snapshots').doc(`snap_${Date.now()}`).set(snapshot, { merge: false });
+    } catch (snapErr) {
+      console.warn('Failed to write leaderboard snapshot', snapErr && snapErr.message || snapErr);
     }
 
     res.json({ ok: true, results });
@@ -1137,14 +1197,37 @@ app.get('/activities', async (req, res) => {
       console.warn('Failed to read last_aggregation_at', e.message || e);
     }
 
-    // Read cached, pre-computed leaderboard summaries from `activities` collection.
-    // This is much faster than recomputing from raw_activities on each request and
-    // keeps the leaderboard UI snappy. Aggregations are produced by POST /aggregate/weekly.
+    // Prefer reading a single pre-computed leaderboard snapshot for fastest response.
+    // The aggregation process writes a single snapshot to `leaderboard_snapshots/latest`.
+    try {
+      const latestSnapDoc = await db.collection('leaderboard_snapshots').doc('latest').get();
+      if (latestSnapDoc.exists) {
+        const snap = latestSnapDoc.data() || {};
+        const rows = Array.isArray(snap.rows) ? snap.rows : [];
+        const lastAgg = snap.metadata && snap.metadata.aggregated_at ? snap.metadata.aggregated_at : lastAggregationAt;
+        return res.json({ rows: rows.map(r => ({ id: r.id, athlete: r.athlete || null, summary: r.summary ? { ...r.summary, updated_at: r.summary.updated_at || lastAgg || Date.now() } : { distance: 0, count: 0, longest: 0, avg_pace: null, elev_gain: 0, updated_at: lastAgg || Date.now() } })), last_aggregation_at: lastAgg });
+      }
+    } catch (e) {
+      console.warn('Failed to read leaderboard snapshot', e && e.message || e);
+    }
+
+    // Fallback: Read cached, pre-computed leaderboard summaries from `activities` collection.
+    // This is slower than snapshot but keeps the leaderboard UI snappy when snapshot missing.
     const snaps = await db.collection('activities').get();
     const rows = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
     // Build two lookup maps:
     //  - athleteMetadataById: keyed by the Firestore doc id (e.g. 'name:Arsel V.' or numeric id)
     //  - athleteMetadata: keyed by normalized canonical names (legacy fallback)
+    // Load athlete summary docs used to enrich cached activities (nickname / goals)
+    const athleteSnaps = await db.collection('summary_athletes').get();
+
+    const normalizeNameKey = (s) => {
+      if (!s) return '';
+      try {
+        return s.toString().trim().replace(/^0+/, '').replace(/\./g, '').replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').toLowerCase();
+      } catch (e) { return String(s || '').toLowerCase().trim(); }
+    };
+
     const athleteMetadataById = new Map();
     const athleteMetadataByIdLower = new Map();
     const athleteMetadata = new Map();

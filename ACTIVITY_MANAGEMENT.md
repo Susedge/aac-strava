@@ -115,6 +115,8 @@ athlete_id,athlete_name,distance,moving_time,start_date,type,name,elevation_gain
 
 Note: The aggregation process is non-destructive — it will not delete or replace existing `raw_activities` documents unless there is a definitive match (for example the Strava activity id or an exact athlete+start_date match). Fuzzy/near matches will NOT be used to overwrite stored records; instead aggregation appends new records so duplicates are preserved and no data is lost.
 
+In addition, each aggregation now writes a single snapshot document to `leaderboard_snapshots/latest` (and a timestamped archive). The frontend prefers that single-document snapshot for fast leaderboard reads instead of re-scanning `raw_activities` or reading many per-athlete `activities` documents.
+
 ## API Endpoints
 
 ### Get Activities
