@@ -669,13 +669,15 @@ app.post('/aggregate/weekly', async (req, res) => {
                 // Try fuzzy match by athlete_id first
                 if (!docRef && athleteId) {
                   const found = await findFuzzyMatch({ byAthleteId: athleteId, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date, nameVal: activityDoc.name, elevationVal: activityDoc.elevation_gain, elapsedVal: activityDoc.elapsed_time, stravaIdVal: activityDoc.strava_id, typeVal: act.type, sportTypeVal: act.sport_type, workoutTypeVal: act.workout_type, athleteResourceState: act.athlete && act.athlete.resource_state });
-                  if (found && (found.type === 'strava_id' || found.type === 'start_date_strict')) { docRef = found.ref; docMatchType = found.type; }
+                  // Treat high-confidence fuzzy matches as definitive so we update instead of creating duplicate docs.
+                  if (found && (found.type === 'strava_id' || found.type === 'start_date_strict' || found.type === 'start_date_loose' || found.type === 'strict_numeric_full' || found.type === 'strict_numeric')) { docRef = found.ref; docMatchType = found.type; }
                 }
 
                 // Then try fuzzy match by athlete_name
                 if (!docRef && athleteName) {
                   const found2 = await findFuzzyMatch({ byAthleteName: athleteName, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date, nameVal: activityDoc.name, elevationVal: activityDoc.elevation_gain, elapsedVal: activityDoc.elapsed_time, stravaIdVal: activityDoc.strava_id, typeVal: act.type, sportTypeVal: act.sport_type, workoutTypeVal: act.workout_type, athleteResourceState: act.athlete && act.athlete.resource_state });
-                  if (found2 && (found2.type === 'strava_id' || found2.type === 'start_date_strict')) { docRef = found2.ref; docMatchType = found2.type; }
+                  // Accept highly confident fuzzy matches found by athlete name search as well
+                  if (found2 && (found2.type === 'strava_id' || found2.type === 'start_date_strict' || found2.type === 'start_date_loose' || found2.type === 'strict_numeric_full' || found2.type === 'strict_numeric')) { docRef = found2.ref; docMatchType = found2.type; }
                 }
               } catch (qErr) {
                 console.warn('Error querying raw_activities for existing doc; will fallback to generated id', qErr && qErr.message || qErr);
