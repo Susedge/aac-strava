@@ -655,8 +655,26 @@ app.post('/aggregate/weekly', async (req, res) => {
                     const mtStrict = Math.abs(candMt - Number(movingTimeVal || 0)) <= MT_TOLERANCE_STRICT || (incElapsed && Math.abs(candElapsed - incElapsed) <= MT_TOLERANCE_STRICT);
 
                     if (distStrict && mtStrict) {
-                      const candName = (d.name || '').toString().trim().toLowerCase();
-                      const incName = (nameVal || '').toString().trim().toLowerCase();
+                      // Normalize activity names before comparing. Many activity names
+                      // include embedded distances or numeric tokens (e.g. "45.78 km left").
+                      // Strip numeric tokens, km/m unit markers and punctuation so names
+                      // like "45.78 km left" and "45.8 km left" match.
+                      const normalizeActivityName = (s) => {
+                        if (!s) return '';
+                        try {
+                          // remove numeric distance tokens like '45.78 km' or '500 m'
+                          let t = String(s || '').toLowerCase();
+                          t = t.replace(/\b\d+(?:[.,]\d+)?\s*(km|kilometer|kilometre|m|meter|metre)\b/gi, '');
+                          // remove remaining digits, punctuation and extra whitespace
+                          t = t.replace(/[\d,.:]/g, '');
+                          t = t.replace(/[^a-z\s]/g, '');
+                          t = t.replace(/\s+/g, ' ').trim();
+                          return t;
+                        } catch (e) { return String(s || '').toLowerCase().trim(); }
+                      };
+
+                      const candName = normalizeActivityName(d.name || '');
+                      const incName = normalizeActivityName(nameVal || '');
                       const nameMatch = candName && incName && candName === incName;
 
                       const candType = (d.type || '').toString().trim().toLowerCase();
@@ -2201,16 +2219,54 @@ app.post('/admin/dedupe-raw-activities', async (req, res) => {
     const normalizeName = s => String(s || '').trim().toLowerCase();
     const round = n => Math.round(Number(n || 0));
 
-    // group by signature
+    // group by fuzzy signature instead of exact rounding to avoid tiny numeric
+    // differences (especially for sub-1km activities) creating separate groups.
+    // We'll iterate docs and try to place each doc into an existing group when
+    // athlete name matches and numeric fields are within tolerances.
     const groups = new Map();
-    for (const doc of docs) {
-      const d = doc.data || {};
+    const fuzzTolerance = {
+      absMeters: 10, // absolute meters tolerance
+      rel: 0.02, // relative tolerance 2%
+      mtSeconds: 10 // moving_time / elapsed_time tolerance (seconds)
+    };
+
+    const findMatchingGroupKey = (d) => {
       const name = normalizeName(d.athlete_name || d.athlete || '');
-      const dist = round(d.distance);
-      const mt = round(d.moving_time || d.elapsed_time || 0);
-      const key = `${name}|${dist}|${mt}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(doc);
+      const dist = Number(d.distance || 0);
+      const mt = Math.round(Number(d.moving_time || d.elapsed_time || 0));
+
+      for (const [k, arr] of groups.entries()) {
+        // Each group key stores the representative doc as the first element
+        const rep = arr[0] && arr[0].data ? arr[0].data : null;
+        if (!rep) continue;
+        const repName = normalizeName(rep.athlete_name || rep.athlete || '');
+        if (repName !== name) continue;
+
+        const repDist = Number(rep.distance || 0);
+        const repMt = Math.round(Number(rep.moving_time || rep.elapsed_time || 0));
+
+        const absd = Math.abs(repDist - dist);
+        const reld = absd / Math.max(1, Math.max(Math.abs(repDist), Math.abs(dist)));
+        const absmt = Math.abs(repMt - mt);
+
+        const distOk = (absd <= fuzzTolerance.absMeters) || (reld <= fuzzTolerance.rel);
+        const mtOk = absmt <= fuzzTolerance.mtSeconds;
+
+        if (distOk && mtOk) return k;
+      }
+      return null;
+    };
+
+    // Build groups using fuzzy matching
+    let groupIndex = 0;
+    for (const doc of docs) {
+      const matchKey = findMatchingGroupKey(doc.data || {});
+      if (matchKey) {
+        groups.get(matchKey).push(doc);
+      } else {
+        const newKey = `g${++groupIndex}`;
+        groups.set(newKey, [doc]);
+      }
     }
 
     // identify duplicates

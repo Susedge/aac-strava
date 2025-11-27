@@ -356,6 +356,18 @@ export default function Admin(){
     list.sort((a,b)=>{
       let valA, valB
       switch(by){
+                case 'name':
+                  valA = String(a.name || '')
+                  valB = String(b.name || '')
+                  break
+                case 'moving_time':
+                  valA = Number(a.moving_time || a.elapsed_time || 0)
+                  valB = Number(b.moving_time || b.elapsed_time || 0)
+                  break
+                case 'type':
+                  valA = String(a.type || '')
+                  valB = String(b.type || '')
+                  break
         case 'distance':
           valA = Number(a.distance || 0)
           valB = Number(b.distance || 0)
@@ -389,6 +401,18 @@ export default function Admin(){
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activityFilter, activitySort, activitySortOrder])
+
+  // Click handler for header sorting — toggles order if same column, otherwise
+  // switch to new column and default to descending.
+  function handleHeaderSort(field){
+    const current = activitySort || 'start_date'
+    let newOrder = 'desc'
+    if (current === field) newOrder = activitySortOrder === 'asc' ? 'desc' : 'asc'
+    setActivitySort(field)
+    setActivitySortOrder(newOrder)
+    // Apply immediately so the table updates on click
+    setTimeout(() => applyActivityFilterAndSort(activityCache), 0)
+  }
 
   async function handleAddActivity(e){
     e && e.preventDefault()
@@ -1052,13 +1076,27 @@ export default function Admin(){
                     <thead>
                       <tr style={{borderBottom:'2px solid #e2e8f0',textAlign:'left'}}>
                         <th style={{padding:12}}>#</th>
-                        <th style={{padding:12}}>Date</th>
-                        <th style={{padding:12}}>Athlete</th>
-                        <th style={{padding:12}}>Name</th>
-                        <th style={{padding:12}}>Distance</th>
-                        <th style={{padding:12}}>Time</th>
-                        <th style={{padding:12}}>Type</th>
-                        <th style={{padding:12}}>Source</th>
+                        <th style={{padding:12,cursor:'pointer'}} onClick={() => handleHeaderSort('start_date')}>
+                          Date {activitySort === 'start_date' ? (activitySortOrder === 'asc' ? '▲' : '▼') : ''}
+                        </th>
+                        <th style={{padding:12,cursor:'pointer'}} onClick={() => handleHeaderSort('athlete_name')}>
+                          Athlete {activitySort === 'athlete_name' ? (activitySortOrder === 'asc' ? '▲' : '▼') : ''}
+                        </th>
+                        <th style={{padding:12,cursor:'pointer'}} onClick={() => handleHeaderSort('name')}>
+                          Name {activitySort === 'name' ? (activitySortOrder === 'asc' ? '▲' : '▼') : ''}
+                        </th>
+                        <th style={{padding:12,cursor:'pointer'}} onClick={() => handleHeaderSort('distance')}>
+                          Distance {activitySort === 'distance' ? (activitySortOrder === 'asc' ? '▲' : '▼') : ''}
+                        </th>
+                        <th style={{padding:12,cursor:'pointer'}} onClick={() => handleHeaderSort('moving_time')}>
+                          Time {activitySort === 'moving_time' ? (activitySortOrder === 'asc' ? '▲' : '▼') : ''}
+                        </th>
+                        <th style={{padding:12,cursor:'pointer'}} onClick={() => handleHeaderSort('type')}>
+                          Type {activitySort === 'type' ? (activitySortOrder === 'asc' ? '▲' : '▼') : ''}
+                        </th>
+                        <th style={{padding:12,cursor:'pointer'}} onClick={() => handleHeaderSort('source')}>
+                          Source {activitySort === 'source' ? (activitySortOrder === 'asc' ? '▲' : '▼') : ''}
+                        </th>
                         <th style={{padding:12}}>Actions</th>
                       </tr>
                     </thead>

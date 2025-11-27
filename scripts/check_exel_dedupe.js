@@ -1,25 +1,15 @@
-#!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
-
-// pick the latest matching export file in the repository root (flexible)
 const files = fs.readdirSync(path.join(__dirname, '..'));
 const matches = files.filter(f => f.startsWith('raw_activities_export_2025-11-27') && f.endsWith('.json'));
-if (!matches.length) { console.error('No raw_activities_export files found in repo root'); process.exit(2); }
-// prefer the lexicographically largest (latest timestamp suffix)
-matches.sort();
-const EX = path.join(__dirname, '..', matches[matches.length - 1]);
+if (!matches.length) { console.error('No export found'); process.exit(1); }
+const EX = path.join(__dirname, '..', matches.sort().slice(-1)[0]);
 console.log('Using export file:', EX);
-
 const raw = JSON.parse(fs.readFileSync(EX, 'utf8'));
 const list = raw.raw_activities || [];
 
 const normalizeName = s => String(s || '').trim().toLowerCase();
-
-// Fuzzy grouping tolerances to match backend dedupe behavior
 const fuzz = { absMeters: 10, rel: 0.02, mtSeconds: 10 };
-
-// Build groups using fuzzy matching instead of strict Math.round keys
 const groups = new Map();
 let gi = 0;
 const findGroup = (d) => {
@@ -42,36 +32,21 @@ const findGroup = (d) => {
   }
   return null;
 }
-
 for (const doc of list) {
   const gk = findGroup(doc);
   if (gk) groups.get(gk).push(doc);
   else groups.set(`g${++gi}`, [doc]);
 }
 
-const dupGroups = Array.from(groups.entries()).filter(([k, arr]) => arr.length > 1);
-console.log('export total', list.length);
-console.log('duplicate groups', dupGroups.length);
-
-// If we dedupe: keep earliest fetched_at per group
-let removed = 0;
-const final = [];
+let exelGroups = 0; let exelTotal = 0;
 for (const [k, arr] of groups.entries()) {
-  if (arr.length === 1) { final.push(arr[0]); continue; }
-  // choose earliest fetched_at
-  arr.sort((a, b) => (Number(a.fetched_at || 0) - Number(b.fetched_at || 0)));
-  final.push(arr[0]);
-  removed += arr.length - 1;
+  if (arr.some(a => (a.athlete_name || '').toLowerCase().includes('exel'))) {
+    exelGroups++;
+    exelTotal += arr.length;
+    console.log('Group', k, 'count', arr.length, 'ids:', arr.map(x=>x.id).join(', '))
+  }
 }
-
-console.log('after dedupe final count', final.length, 'removed', removed);
-// print some sample duplicate groups
-if (dupGroups.length) {
-  console.log('\nSample duplicate groups (first 5):');
-  dupGroups.slice(0,5).forEach(([k, arr], i) => {
-    console.log(`\nGroup ${i+1} key=${k} count=${arr.length}`);
-    arr.slice(0,6).forEach(a => console.log(' -', a.id, a.distance, a.moving_time, a.elapsed_time, a.athlete_name));
-  });
-}
+console.log('Exel groups count:', exelGroups, 'total exel docs in groups:', exelTotal);
+console.log('Total groups', groups.size);
 
 process.exit(0);
