@@ -722,12 +722,50 @@ app.post('/aggregate/weekly', async (req, res) => {
               // Build final activity doc with explicit `id` to match normalized shape
               const activityDoc = Object.assign({}, activityDocBase, { id: finalDocId });
 
+              // Canonicalize payload to the same keys/shape we use in raw_activities.pruned_normalized.json
+              const canonicalKeys = [
+                'id',
+                'distance',
+                'athlete_id',
+                'source',
+                'elevation_gain',
+                'type',
+                'workout_type',
+                'elapsed_time',
+                'name',
+                'athlete_name',
+                'moving_time',
+                'sport_type',
+                'fetched_at',
+                'updated_at'
+              ];
+
+              const canonicalPayload = canonicalKeys.reduce((acc, k) => {
+                // Map fields from activityDoc or fallback to null / reasonable defaults
+                if (k === 'id') acc[k] = activityDoc.id;
+                else if (k === 'distance') acc[k] = Number(activityDoc.distance || 0);
+                else if (k === 'athlete_id') acc[k] = typeof activityDoc.athlete_id !== 'undefined' ? activityDoc.athlete_id : null;
+                else if (k === 'source') acc[k] = activityDoc.source || 'strava_api';
+                else if (k === 'elevation_gain') acc[k] = Number(activityDoc.elevation_gain || activityDoc.total_elevation_gain || 0);
+                else if (k === 'type') acc[k] = activityDoc.type || 'Run';
+                else if (k === 'workout_type') acc[k] = typeof activityDoc.workout_type !== 'undefined' ? activityDoc.workout_type : null;
+                else if (k === 'elapsed_time') acc[k] = typeof activityDoc.elapsed_time !== 'undefined' && activityDoc.elapsed_time !== null ? Number(activityDoc.elapsed_time) : null;
+                else if (k === 'name') acc[k] = activityDoc.name || 'Activity';
+                else if (k === 'athlete_name') acc[k] = activityDoc.athlete_name || '';
+                else if (k === 'moving_time') acc[k] = typeof activityDoc.moving_time !== 'undefined' && activityDoc.moving_time !== null ? Number(activityDoc.moving_time) : 0;
+                else if (k === 'sport_type') acc[k] = typeof activityDoc.sport_type !== 'undefined' ? activityDoc.sport_type : null;
+                else if (k === 'fetched_at') acc[k] = activityDoc.fetched_at || Date.now();
+                else if (k === 'updated_at') acc[k] = activityDoc.updated_at || Date.now();
+                else acc[k] = activityDoc[k] || null;
+                return acc;
+              }, {});
+
               if (docRef) {
                 // Only update existing document when the match was definitive (strava_id or exact start_date).
                 // For fuzzy matches we avoid overwriting/merging and instead create a new doc to preserve duplicates.
-                batch.set(docRef, activityDoc, { merge: true });
+                batch.set(docRef, canonicalPayload, { merge: true });
               } else {
-                batch.set(db.collection('raw_activities').doc(uniqueId), activityDoc, { merge: true });
+                batch.set(db.collection('raw_activities').doc(uniqueId), canonicalPayload, { merge: true });
               }
 
               storedCount++;
