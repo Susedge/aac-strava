@@ -467,17 +467,19 @@ app.post('/aggregate/weekly', async (req, res) => {
               const start_date = act.start_date || act.start_date_local || null;
 
               // Always include canonical fields so documents are uniform across writes.
-              const activityDoc = {
+              // We'll set the `id` field later once we determine the final Firestore doc id
+              const activityDocBase = {
+                // canonical fields (defaulting to null for missing values)
                 athlete_id: athleteId || null,
                 athlete_name: athleteName || '',
                 distance: Number(distance || 0),
-                moving_time: Math.round(Number(moving_time || 0)),
+                moving_time: Math.round(Number(moving_time || 0) || 0),
                 // elapsed_time always set (fallback to moving_time when missing)
-                elapsed_time: typeof act.elapsed_time !== 'undefined' ? Math.round(Number(act.elapsed_time || 0)) : Math.round(Number(act.moving_time || 0) || 0),
-                // Strava's activity id is the definitive identifier when present
-                ...(act.id ? { strava_id: act.id } : {}),
+                elapsed_time: typeof act.elapsed_time !== 'undefined' && act.elapsed_time !== null ? Math.round(Number(act.elapsed_time || 0)) : Math.round(Number(act.moving_time || 0) || 0),
+                // Strava's activity id saved explicitly too (keeps the original external id)
+                strava_id: typeof act.id !== 'undefined' && act.id !== null ? String(act.id) : null,
                 // Always include start_date if available
-                ...(start_date ? { start_date } : {}),
+                start_date: start_date || null,
                 // Ensure sport_type/workout_type are present (or null)
                 sport_type: act.sport_type || null,
                 workout_type: typeof act.workout_type !== 'undefined' ? act.workout_type : null,
@@ -485,7 +487,7 @@ app.post('/aggregate/weekly', async (req, res) => {
                 name: act.name || 'Activity',
                 elevation_gain: Number(act.total_elevation_gain || act.elev_total || act.elevation_gain || 0),
                 source: 'strava_api',
-                fetched_at: Date.now(),
+                fetched_at: act.fetched_at || Date.now(),
                 updated_at: Date.now()
               };
 
@@ -678,6 +680,12 @@ app.post('/aggregate/weekly', async (req, res) => {
               } catch (qErr) {
                 console.warn('Error querying raw_activities for existing doc; will fallback to generated id', qErr && qErr.message || qErr);
               }
+
+              // decide on final doc id (use existing docRef id or the deterministic uniqueId)
+              const finalDocId = docRef ? docRef.id : uniqueId;
+
+              // Build final activity doc with explicit `id` to match normalized shape
+              const activityDoc = Object.assign({}, activityDocBase, { id: finalDocId });
 
               if (docRef) {
                 // Only update existing document when the match was definitive (strava_id or exact start_date).
@@ -1660,8 +1668,12 @@ app.post('/admin/normalize-raw-activities', async (req, res) => {
       // timestamps
       if (!data.updated_at) norm.updated_at = Date.now();
 
-      // If there are keys to set, capture update
-      if (Object.keys(norm).length > 0) updates.push({ id: d.id, set: norm });
+      // If there are keys to set, capture update. Also ensure the `id` field
+      // exists inside each document to keep shape consistent.
+      if (Object.keys(norm).length > 0) {
+        if (typeof norm.id === 'undefined') norm.id = d.id;
+        updates.push({ id: d.id, set: norm });
+      }
     });
 
     if (dryRun) return res.json({ ok: true, total: snap.size, candidates: updates.slice(0, 200), count: updates.length });
@@ -2039,8 +2051,27 @@ app.post('/admin/replace-raw-activities', async (req, res) => {
         } catch (e) {
           ref = db.collection('raw_activities').doc();
         }
-        // Remove any accidental fields we don't want duplicated? We'll keep payload as-is.
-        batch.set(ref, Object.assign({}, item));
+        // Ensure a canonical payload is written (include id/fetched_at/updated_at and canonical fields)
+        const now = Date.now();
+        const payload = Object.assign({}, item || {});
+        // Use the document id as `id` field
+        payload.id = ref.id;
+        // Ensure canonical keys exist
+        payload.athlete_id = typeof payload.athlete_id !== 'undefined' ? payload.athlete_id : null;
+        payload.athlete_name = payload.athlete_name || '';
+        payload.distance = Number(payload.distance || 0);
+        payload.moving_time = Number(payload.moving_time || payload.elapsed_time || 0);
+        payload.elapsed_time = typeof payload.elapsed_time !== 'undefined' && payload.elapsed_time !== null ? Number(payload.elapsed_time) : Number(payload.moving_time || 0);
+        payload.elevation_gain = Number(payload.elevation_gain || payload.total_elevation_gain || 0);
+        payload.source = payload.source || 'uploaded';
+        payload.workout_type = typeof payload.workout_type !== 'undefined' ? payload.workout_type : null;
+        payload.sport_type = typeof payload.sport_type !== 'undefined' ? payload.sport_type : null;
+        payload.type = payload.type || 'Run';
+        payload.name = payload.name || 'Activity';
+        payload.fetched_at = payload.fetched_at || now;
+        payload.updated_at = payload.updated_at || now;
+
+        batch.set(ref, payload);
         inserted++;
       });
       await batch.commit();
@@ -2049,6 +2080,31 @@ app.post('/admin/replace-raw-activities', async (req, res) => {
     return res.json({ ok: true, replaced: true, existingCount, backedUp, deleted, inserted, incomingCount: incoming.length });
   } catch (e) {
     console.error('replace-raw-activities failed', e);
+    return res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Admin: Create a leaderboard snapshot from the current `activities` collection
+// (useful when you want to promote current per-athlete summaries to the fast read snapshot).
+app.post('/admin/make-activities-snapshot', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    // No body required; optional { archive: true } to write a timestamped archive as well
+    const archive = req.body && typeof req.body.archive !== 'undefined' ? !!req.body.archive : true;
+
+    const actSnaps = await db.collection('activities').get();
+    if (!actSnaps || actSnaps.empty) return res.status(400).json({ ok: false, error: 'no activities documents available to snapshot' });
+
+    const rows = actSnaps.docs.map(d => ({ id: d.id, ...d.data() }));
+    const snapshot = { metadata: { created_at: Date.now(), rowsCount: rows.length }, rows };
+
+    // write latest snapshot
+    await db.collection('leaderboard_snapshots').doc('latest').set(snapshot, { merge: false });
+    if (archive) await db.collection('leaderboard_snapshots').doc(`snap_${Date.now()}`).set(snapshot, { merge: false });
+
+    return res.json({ ok: true, rowsCount: rows.length, archived: !!archive });
+  } catch (e) {
+    console.error('make-activities-snapshot failed', e && e.message || e);
     return res.status(500).json({ error: e.message || String(e) });
   }
 });
@@ -2064,24 +2120,31 @@ app.post('/admin/raw-activities', async (req, res) => {
     if (!start_date) return res.status(400).json({ error: 'start_date required (YYYY-MM-DD or ISO)' });
     
     // No need to lookup athlete_id - we match purely by name
+    // Create a pre-defined doc id so we can include `id` inside the stored document
+    const newDocRef = db.collection('raw_activities').doc();
+    const now = Date.now();
     const activity = {
-      athlete_id: null, // Club activities don't have IDs
+      id: newDocRef.id,
+      athlete_id: null,
       athlete_name: athlete_name,
       distance: Number(distance) || 0,
       moving_time: Number(moving_time) || 0,
-      start_date: start_date,
+      start_date: start_date || null,
       type: type || 'Run',
       name: name || 'Manual Activity',
       elevation_gain: Number(elevation_gain) || 0,
+      workout_type: null,
+      sport_type: null,
+      elapsed_time: Number(moving_time) || 0,
       source: 'manual',
-      created_at: Date.now(),
-      updated_at: Date.now()
+      fetched_at: now,
+      updated_at: now
     };
-    
-    const docRef = await db.collection('raw_activities').add(activity);
-    console.log(`Created manual activity ${docRef.id} for athlete ${athlete_name}`);
-    
-    res.json({ ok: true, activity: { id: docRef.id, ...activity } });
+
+    await newDocRef.set(activity, { merge: false });
+    console.log(`Created manual activity ${newDocRef.id} for athlete ${athlete_name}`);
+
+    res.json({ ok: true, activity });
   } catch (e) {
     console.error('Failed to create activity', e);
     res.status(500).json({ error: e.message || String(e) });
@@ -2108,7 +2171,15 @@ app.put('/admin/raw-activities/:id', async (req, res) => {
     if (elevation_gain !== undefined) update.elevation_gain = Number(elevation_gain) || 0;
     
     await db.collection('raw_activities').doc(id).set(update, { merge: true });
-    const doc = await db.collection('raw_activities').doc(id).get();
+    // Ensure the stored document has an explicit `id` field (keeps documents normalized)
+    const docRef = db.collection('raw_activities').doc(id);
+    const doc = await docRef.get();
+    if (doc.exists) {
+      const data = doc.data() || {};
+      if (typeof data.id === 'undefined') {
+        await docRef.set({ id }, { merge: true });
+      }
+    }
     
     console.log(`Updated activity ${id}`);
     res.json({ ok: true, activity: doc.exists ? { id: doc.id, ...doc.data() } : null });
@@ -2167,8 +2238,11 @@ app.post('/admin/raw-activities/bulk', async (req, res) => {
       };
       
       const docRef = db.collection('raw_activities').doc();
-      batch.set(docRef, activity);
-      created.push({ id: docRef.id, ...activity });
+      // include canonical id + timestamps
+      const now = Date.now();
+      const activityWithId = Object.assign({ id: docRef.id, fetched_at: now, updated_at: now, workout_type: null, sport_type: null, elapsed_time: Number(act.moving_time) || 0 }, activity);
+      batch.set(docRef, activityWithId);
+      created.push(activityWithId);
     }
     
     await batch.commit();

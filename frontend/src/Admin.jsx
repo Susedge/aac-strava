@@ -767,6 +767,24 @@ export default function Admin(){
     }
   }
 
+  async function handleMakeActivitiesSnapshot(){
+    if (!confirm('Create a leaderboard snapshot from the current activities collection? This writes to leaderboard_snapshots/latest and archives a timestamped copy. Continue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Creating leaderboard snapshot…')
+      const res = await fetch(`${API}/admin/make-activities-snapshot`, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ archive: true }) })
+      if (!res.ok) throw new Error('Snapshot creation failed')
+      const j = await res.json()
+      alert(`Snapshot created. Rows: ${j.rowsCount || 0}. Archived: ${j.archived ? 'yes' : 'no'}`)
+    }catch(e){
+      console.error('Make snapshot failed', e)
+      alert('Snapshot failed: ' + (e && e.message ? e.message : e))
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
 
   return (
     <div className="admin-page admin-card">
@@ -881,6 +899,7 @@ export default function Admin(){
                   <button className="btn btn-ghost" onClick={() => handlePreviewReplace()} disabled={!uploadPayload}>Preview Replace</button>
                   <button className="btn btn-ghost" onClick={() => handleReplaceConfirm()} disabled={!uploadPayload}>Replace Raw Activities</button>
                   <button className="btn btn-ghost" onClick={() => handlePreviewNormalize()}>Preview Normalize</button>
+                  <button className="btn btn-ghost" onClick={() => handleMakeActivitiesSnapshot()}>Make Activities Snapshot</button>
                   <button className="btn btn-ghost" onClick={() => handleNormalize()}>Normalize Raw Activities</button>
                   <button className="btn btn-ghost" onClick={handleCleanup}>Cleanup Duplicates</button>
                 </div>
