@@ -701,14 +701,17 @@ app.post('/aggregate/weekly', async (req, res) => {
 
                 // Try fuzzy match by athlete_id first
                 if (!docRef && athleteId) {
-                  const found = await findFuzzyMatch({ byAthleteId: athleteId, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date, nameVal: activityDoc.name, elevationVal: activityDoc.elevation_gain, elapsedVal: activityDoc.elapsed_time, stravaIdVal: activityDoc.strava_id, typeVal: act.type, sportTypeVal: act.sport_type, workoutTypeVal: act.workout_type, athleteResourceState: act.athlete && act.athlete.resource_state });
+                  // activityDoc is created later (after match detection) so use the
+                  // activityDocBase here which already contains the canonical fields
+                  // for the incoming activity.
+                  const found = await findFuzzyMatch({ byAthleteId: athleteId, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date, nameVal: activityDocBase.name, elevationVal: activityDocBase.elevation_gain, elapsedVal: activityDocBase.elapsed_time, stravaIdVal: activityDocBase.strava_id, typeVal: act.type, sportTypeVal: act.sport_type, workoutTypeVal: act.workout_type, athleteResourceState: act.athlete && act.athlete.resource_state });
                   // Treat high-confidence fuzzy matches as definitive so we update instead of creating duplicate docs.
                   if (found && (found.type === 'strava_id' || found.type === 'start_date_strict' || found.type === 'start_date_loose' || found.type === 'strict_numeric_full' || found.type === 'strict_numeric' || found.type === 'athlete_name_numeric_match' || found.type === 'athlete_name_numeric_match')) { docRef = found.ref; docMatchType = found.type; }
                 }
 
                 // Then try fuzzy match by athlete_name
                 if (!docRef && athleteName) {
-                  const found2 = await findFuzzyMatch({ byAthleteName: athleteName, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date, nameVal: activityDoc.name, elevationVal: activityDoc.elevation_gain, elapsedVal: activityDoc.elapsed_time, stravaIdVal: activityDoc.strava_id, typeVal: act.type, sportTypeVal: act.sport_type, workoutTypeVal: act.workout_type, athleteResourceState: act.athlete && act.athlete.resource_state });
+                  const found2 = await findFuzzyMatch({ byAthleteName: athleteName, distanceVal: distance, movingTimeVal: moving_time, startDateVal: start_date, nameVal: activityDocBase.name, elevationVal: activityDocBase.elevation_gain, elapsedVal: activityDocBase.elapsed_time, stravaIdVal: activityDocBase.strava_id, typeVal: act.type, sportTypeVal: act.sport_type, workoutTypeVal: act.workout_type, athleteResourceState: act.athlete && act.athlete.resource_state });
                   // Accept highly confident fuzzy matches found by athlete name search as well
                   if (found2 && (found2.type === 'strava_id' || found2.type === 'start_date_strict' || found2.type === 'start_date_loose' || found2.type === 'strict_numeric_full' || found2.type === 'strict_numeric' || found2.type === 'athlete_name_numeric_match')) { docRef = found2.ref; docMatchType = found2.type; }
                 }
@@ -2178,6 +2181,98 @@ app.post('/admin/make-activities-snapshot', async (req, res) => {
     return res.json({ ok: true, rowsCount: rows.length, archived: !!archive });
   } catch (e) {
     console.error('make-activities-snapshot failed', e && e.message || e);
+    return res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Admin: Dedupe raw_activities in-place (dry_run supported)
+// groupingKey: athlete_name (case-insensitive) + rounded distance + rounded moving_time/elapsed_time
+app.post('/admin/dedupe-raw-activities', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const dryRun = (req.query && (req.query.dry_run === '1' || req.query.dry_run === 'true')) || (req.body && req.body.dry_run);
+    const createBackup = req.body && typeof req.body.create_backup !== 'undefined' ? !!req.body.create_backup : true;
+
+    const snaps = await db.collection('raw_activities').get();
+    if (!snaps || snaps.empty) return res.json({ ok: true, message: 'no raw_activities documents' });
+
+    const docs = snaps.docs.map(d => ({ id: d.id, data: d.data() }));
+
+    const normalizeName = s => String(s || '').trim().toLowerCase();
+    const round = n => Math.round(Number(n || 0));
+
+    // group by signature
+    const groups = new Map();
+    for (const doc of docs) {
+      const d = doc.data || {};
+      const name = normalizeName(d.athlete_name || d.athlete || '');
+      const dist = round(d.distance);
+      const mt = round(d.moving_time || d.elapsed_time || 0);
+      const key = `${name}|${dist}|${mt}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(doc);
+    }
+
+    // identify duplicates
+    const dupGroups = Array.from(groups.entries()).filter(([k, arr]) => arr.length > 1);
+
+    if (dryRun) {
+      // return summary and some samples
+      const sample = dupGroups.slice(0, 10).map(([k, arr]) => ({ key: k, count: arr.length, ids: arr.map(a => a.id).slice(0, 5) }));
+      return res.json({ ok: true, dry_run: true, totalDocs: docs.length, duplicateGroupsCount: dupGroups.length, sample });
+    }
+
+    // Not a dry-run: perform backup + merge/delete
+    const batchSize = 500;
+    let backedUp = 0;
+    let deleted = 0;
+    let merged = 0;
+
+    // create backups for docs we will remove (use per-doc backup id)
+    for (const [key, arr] of dupGroups) {
+      // pick canonical keeper: prefer doc with earliest fetched_at, else first
+      arr.sort((a, b) => (Number(a.data && a.data.fetched_at || 0) - Number(b.data && b.data.fetched_at || 0)));
+      const keeper = arr[0];
+      const toRemove = arr.slice(1);
+
+      // merge: we will set keeper to canonical shape and keep fetched_at as earliest
+      const now = Date.now();
+      const canonical = {
+        id: keeper.id,
+        distance: Number(keeper.data.distance || 0),
+        athlete_id: typeof keeper.data.athlete_id !== 'undefined' ? keeper.data.athlete_id : null,
+        source: keeper.data.source || 'strava_api',
+        elevation_gain: Number(keeper.data.elevation_gain || keeper.data.total_elevation_gain || 0),
+        type: keeper.data.type || 'Run',
+        workout_type: typeof keeper.data.workout_type !== 'undefined' ? keeper.data.workout_type : null,
+        elapsed_time: typeof keeper.data.elapsed_time !== 'undefined' && keeper.data.elapsed_time !== null ? Number(keeper.data.elapsed_time) : null,
+        name: keeper.data.name || 'Activity',
+        athlete_name: keeper.data.athlete_name || '',
+        moving_time: typeof keeper.data.moving_time !== 'undefined' && keeper.data.moving_time !== null ? Number(keeper.data.moving_time) : 0,
+        sport_type: typeof keeper.data.sport_type !== 'undefined' ? keeper.data.sport_type : null,
+        fetched_at: Number(keeper.data.fetched_at || now),
+        updated_at: now
+      };
+
+      // backup + delete others
+      for (const doc of toRemove) {
+        if (createBackup) {
+          const backupId = `${doc.id}_${Date.now()}`;
+          await db.collection('raw_activities_backup').doc(backupId).set(Object.assign({}, doc.data, { original_id: doc.id, backup_at: Date.now(), backup_reason: 'dedupe' }));
+          backedUp++;
+        }
+        await db.collection('raw_activities').doc(doc.id).delete();
+        deleted++;
+      }
+
+      // write canonical payload to keeper doc (merge false -> replace) so structure is canonical
+      await db.collection('raw_activities').doc(keeper.id).set(Object.assign({}, canonical), { merge: false });
+      merged++;
+    }
+
+    return res.json({ ok: true, totalDocs: docs.length, duplicateGroups: dupGroups.length, backedUp, deleted, merged, resultingTotal: docs.length - deleted });
+  } catch (e) {
+    console.error('dedupe-raw-activities failed', e);
     return res.status(500).json({ error: e.message || String(e) });
   }
 });
