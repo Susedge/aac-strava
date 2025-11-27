@@ -26,6 +26,9 @@ export default function Admin(){
   const [adminBusy, setAdminBusy] = useState(false)
   const [adminBusyMsg, setAdminBusyMsg] = useState('')
   const [showAddActivity, setShowAddActivity] = useState(false)
+  const [uploadPayload, setUploadPayload] = useState(null)
+  const [uploadFileName, setUploadFileName] = useState('')
+  const [replacePreview, setReplacePreview] = useState(null)
   const [activityFilter, setActivityFilter] = useState('') // Filter by athlete name
   const [activitySort, setActivitySort] = useState('start_date') // Sort field  
   const [activitySortOrder, setActivitySortOrder] = useState('desc') // asc or desc
@@ -608,6 +611,33 @@ export default function Admin(){
     }
   }
 
+  async function handleExportPrunedNormalized(){
+    if (!confirm('Download pruned + normalized JSON file (raw_activities.pruned_normalized.json) from the server?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Downloading pruned/normalized JSON…')
+      const res = await fetch(`${API}/admin/export-pruned-normalized?download=1`, { method: 'GET' })
+      if (!res.ok) throw new Error('Export failed')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.style.display = 'none'
+      a.href = url
+      const name = `raw_activities.pruned_normalized_${new Date().toISOString().replace(/[:.]/g,'-')}.json`
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    }catch(e){
+      console.error('Export pruned-normalized failed', e)
+      alert('Export error: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
   async function handlePreviewNormalize(){
     if (!confirm('Preview normalization of raw_activities (dry-run). Continue?')) return
     try{
@@ -662,6 +692,75 @@ export default function Admin(){
     }catch(e){
       console.error('Normalize (with prune) failed', e)
       alert('Normalize failed: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
+  function handleUploadFile(e){
+    const f = e && e.target && e.target.files && e.target.files[0]
+    if (!f) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      try{
+        const txt = ev.target.result
+        const parsed = JSON.parse(txt)
+        setUploadPayload(parsed)
+        setUploadFileName(f.name)
+        setReplacePreview(null)
+      }catch(err){
+        alert('Failed to parse JSON: ' + (err && err.message ? err.message : err))
+      }
+    }
+    reader.readAsText(f)
+  }
+
+  async function handlePreviewReplace(){
+    if (!uploadPayload) return alert('No payload loaded. Choose a JSON file first.')
+    if (!confirm('Preview will inspect the incoming payload and report what would happen. Continue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Previewing replace upload…')
+
+      const res = await fetch(`${API}/admin/replace-raw-activities?dry_run=1`, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(uploadPayload) })
+      if (!res.ok) throw new Error('Preview failed: ' + res.status)
+      const j = await res.json()
+      setReplacePreview(j)
+      alert(`Preview: incoming ${j.incomingCount || 0} docs. Existing ${j.existingCount || 0}. Overlap: ${j.overlappingCount || 0}`)
+    }catch(e){
+      console.error('Preview replace failed', e)
+      alert('Preview failed: ' + (e && e.message ? e.message : e))
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
+  async function handleReplaceConfirm(){
+    if (!uploadPayload) return alert('No payload loaded. Choose a JSON file first.')
+    if (!confirm('This will replace ALL documents in raw_activities with the uploaded payload. A backup will be created. Proceed?')) return
+    await handleReplaceUpload()
+  }
+
+  async function handleReplaceUpload(){
+    if (!uploadPayload) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Replacing raw_activities…')
+
+      const res = await fetch(`${API}/admin/replace-raw-activities`, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(Object.assign({}, uploadPayload, { create_backup: true, preserve_ids: true })) })
+      if (!res.ok) {
+        const body = await res.text().catch(()=>null)
+        throw new Error(`Replace failed: ${res.status} ${body || ''}`)
+      }
+      const j = await res.json()
+      alert(`Replace complete: inserted ${j.inserted || 0}, deleted ${j.deleted || 0}, backedUp ${j.backedUp || j.backedUp || j.backedUp || j.backedUp || 0}`)
+      // refresh activities cache
+      await loadActivities(true)
+    }catch(e){
+      console.error('Replace upload failed', e)
+      alert('Replace failed: ' + (e && e.message ? e.message : e))
     }finally{
       setAdminBusy(false)
       setAdminBusyMsg('')
@@ -773,6 +872,14 @@ export default function Admin(){
                   <button className="btn btn-ghost" onClick={runAggregation}>Run Aggregation</button>
                   <button className="btn btn-ghost" onClick={() => handlePreviewCleanup()}>Preview Cleanup</button>
                   <button className="btn btn-ghost" onClick={() => handleExportRawActivities()}>Export Raw Activities</button>
+                  <button className="btn btn-ghost" onClick={() => handleExportPrunedNormalized()}>Export Pruned/Normalized</button>
+                  <label style={{display:'inline-flex',alignItems:'center',gap:8}}>
+                    <input id="uploadRawFile" type="file" accept="application/json" style={{display:'none'}} onChange={e => handleUploadFile(e)} />
+                    <button type="button" className="btn btn-ghost" onClick={() => document.getElementById('uploadRawFile').click()}>Choose JSON</button>
+                    <span style={{fontSize:12,color:'#64748b'}}>{uploadFileName || 'No file selected'}</span>
+                  </label>
+                  <button className="btn btn-ghost" onClick={() => handlePreviewReplace()} disabled={!uploadPayload}>Preview Replace</button>
+                  <button className="btn btn-ghost" onClick={() => handleReplaceConfirm()} disabled={!uploadPayload}>Replace Raw Activities</button>
                   <button className="btn btn-ghost" onClick={() => handlePreviewNormalize()}>Preview Normalize</button>
                   <button className="btn btn-ghost" onClick={() => handleNormalize()}>Normalize Raw Activities</button>
                   <button className="btn btn-ghost" onClick={handleCleanup}>Cleanup Duplicates</button>

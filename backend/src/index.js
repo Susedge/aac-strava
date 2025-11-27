@@ -1920,6 +1920,139 @@ app.get('/admin/export-raw-activities', async (req, res) => {
   }
 });
 
+// Admin: Export the pruned + normalized JSON file from the repo root
+// (raw_activities.pruned_normalized.json). This is useful when the team
+// prepared an offline pruned/normalized payload they want to download.
+app.get('/admin/export-pruned-normalized', async (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    // Try backend folder first, then repo root as a fallback (script earlier writes root file)
+    let filePath = path.join(__dirname, '..', 'raw_activities.pruned_normalized.json');
+    if (!fs.existsSync(filePath)) {
+      // fallback to repo root
+      const maybeRoot = path.join(__dirname, '..', '..', 'raw_activities.pruned_normalized.json');
+      if (fs.existsSync(maybeRoot)) filePath = maybeRoot;
+    }
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'pruned_normalized file not found on server' });
+
+    const wantDownload = (req.query && (req.query.download === '1' || req.query.download === 'true')) || (req.body && req.body.download);
+    const content = fs.readFileSync(filePath, 'utf8');
+
+    if (wantDownload) {
+      const filename = `raw_activities.pruned_normalized_${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(content);
+    }
+
+    return res.json(JSON.parse(content));
+  } catch (e) {
+    console.error('export-pruned-normalized failed', e);
+    return res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Admin: Replace the entire raw_activities collection from an uploaded JSON payload.
+// Body should contain either { raw_activities: [ ... ] } or { activities: [ ... ] } or be the array itself.
+// Supports dry_run=true to preview actions, create_backup=true to back up current docs before replacing,
+// and preserve_ids=true to use incoming records' `id` fields as Firestore doc ids (if present).
+app.post('/admin/replace-raw-activities', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const dryRun = (req.query && (req.query.dry_run === '1' || req.query.dry_run === 'true')) || (req.body && req.body.dry_run);
+    const createBackup = req.body && typeof req.body.create_backup !== 'undefined' ? !!req.body.create_backup : true;
+    const preserveIds = req.body && typeof req.body.preserve_ids !== 'undefined' ? !!req.body.preserve_ids : true;
+
+    // Accept a few shapes for incoming payload
+    const body = req.body || {};
+    let incoming = body.raw_activities || body.activities || body;
+    // If body is an object that isn't an array but has top-level exported_at and raw_activities, use that
+    if (!Array.isArray(incoming) && body && Array.isArray(body.raw_activities)) incoming = body.raw_activities;
+
+    if (!Array.isArray(incoming)) return res.status(400).json({ error: 'No activities array found in request body' });
+
+    console.log(`replace-raw-activities received ${incoming.length} incoming docs (dryRun=${!!dryRun}, createBackup=${createBackup}, preserveIds=${preserveIds})`);
+
+    // Fetch current raw_activities
+    const snap = await db.collection('raw_activities').get();
+    const existingCount = snap ? snap.size : 0;
+
+    // Quick analysis for preview
+    const incomingIds = new Set(incoming.filter(i => i && i.id).map(i => String(i.id)));
+    const existingIds = new Set(snap.docs.map(d => String(d.id)));
+    const overlapping = Array.from(incomingIds).filter(id => existingIds.has(id));
+
+    if (dryRun) {
+      // Sampling for preview
+      const sampleExisting = snap.docs.slice(0, 5).map(d => d.id);
+      const sampleIncoming = incoming.slice(0, 5).map(i => i && (i.id || '(no id)'));
+      return res.json({ ok: true, dry_run: true, existingCount, incomingCount: incoming.length, overlappingCount: overlapping.length, overlappingSample: overlapping.slice(0, 10), sampleExisting, sampleIncoming });
+    }
+
+    // Actual replacement
+    // 1) backup existing docs if requested
+    const batchSize = 500;
+    let backedUp = 0;
+    if (createBackup && snap && !snap.empty) {
+      const docs = snap.docs;
+      for (let i = 0; i < docs.length; i += batchSize) {
+        const batch = db.batch();
+        const slice = docs.slice(i, i + batchSize);
+        slice.forEach(docSnap => {
+          const payload = Object.assign({}, docSnap.data(), { original_id: docSnap.id, backed_up_at: Date.now(), backup_reason: 'replace_raw_activities' });
+          // use new backup id to avoid collisions
+          const backupId = `${docSnap.id}_${Date.now()}`;
+          const ref = db.collection('raw_activities_backup').doc(backupId);
+          batch.set(ref, payload);
+        });
+        await batch.commit();
+        backedUp += slice.length;
+      }
+    }
+
+    // 2) delete existing raw_activities
+    let deleted = 0;
+    if (snap && !snap.empty) {
+      const ids = snap.docs.map(d => d.id);
+      for (let i = 0; i < ids.length; i += batchSize) {
+        const batch = db.batch();
+        const slice = ids.slice(i, i + batchSize);
+        slice.forEach(id => batch.delete(db.collection('raw_activities').doc(id)));
+        await batch.commit();
+        deleted += slice.length;
+      }
+    }
+
+    // 3) write incoming docs
+    let inserted = 0;
+    for (let i = 0; i < incoming.length; i += batchSize) {
+      const batch = db.batch();
+      const slice = incoming.slice(i, i + batchSize);
+      slice.forEach(item => {
+        // Choose doc ref: preserve id if requested and provided, else let firestore generate
+        let ref;
+        try {
+          if (preserveIds && item && item.id) ref = db.collection('raw_activities').doc(String(item.id));
+          else ref = db.collection('raw_activities').doc();
+        } catch (e) {
+          ref = db.collection('raw_activities').doc();
+        }
+        // Remove any accidental fields we don't want duplicated? We'll keep payload as-is.
+        batch.set(ref, Object.assign({}, item));
+        inserted++;
+      });
+      await batch.commit();
+    }
+
+    return res.json({ ok: true, replaced: true, existingCount, backedUp, deleted, inserted, incomingCount: incoming.length });
+  } catch (e) {
+    console.error('replace-raw-activities failed', e);
+    return res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
 // Admin: Add a new manual activity (using athlete name)
 app.post('/admin/raw-activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
