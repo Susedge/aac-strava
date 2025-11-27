@@ -1,0 +1,144 @@
+{
+  "total": 519,
+  "groups_total": 502,
+  "duplicate_groups": 17,
+  "to_delete": 17,
+  "samples": [
+    {
+      "key": "arvin t.|super dilim run|5001.9|1593|1593|0.0",
+      "keep": "8eSdR0wXq4xJdAjmwJk2",
+      "deletes": [
+        "Arvin_T_5002_1593"
+      ],
+      "count": 2
+    },
+    {
+      "key": "aljohn e.|100km commit to run: 76.54 left|1132.0|1089|1089|0.0",
+      "keep": "Aljohn_E__1132",
+      "deletes": [
+        "Aljohn_E_1132_1089"
+      ],
+      "count": 2
+    },
+    {
+      "key": "aljohn e.|lakad during conference|2916.7|2100|2100|0.0",
+      "keep": "Aljohn_E__2917",
+      "deletes": [
+        "Aljohn_E_2917_2100"
+      ],
+      "count": 2
+    },
+    {
+      "key": "arsel v.|afternoon run|5015.0|2169|2169|0.0",
+      "keep": "Arsel_V__5015",
+      "deletes": [
+        "Arsel_V_5015_2169"
+      ],
+      "count": 2
+    },
+    {
+      "key": "arsel v.|afternoon run|5016.1|2161|2161|0.0",
+      "keep": "Arsel_V__5016",
+      "deletes": [
+        "Arsel_V_5016_2161"
+      ],
+      "count": 2
+    },
+    {
+      "key": "arsel v.|evening run|5017.9|2266|2266|14.3",
+      "keep": "Arsel_V__5018",
+      "deletes": [
+        "Arsel_V_5018_2266"
+      ],
+      "count": 2
+    },
+    {
+      "key": "arsel v.|evening run|826.7|464|464|0.0",
+      "keep": "Arsel_V__827",
+      "deletes": [
+        "Arsel_V_827_464"
+      ],
+      "count": 2
+    },
+    {
+      "key": "carl joshua b.|outdoor run|5715.7|2517|2517|18.0",
+      "keep": "Carl_Joshua_B__5716",
+      "deletes": [
+        "Carl_Joshua_B_5716_2517"
+      ],
+      "count": 2
+    },
+    {
+      "key": "carl joshua b.|outdoor run|6071.3|2430|2430|14.1",
+      "keep": "Carl_Joshua_B__6071",
+      "deletes": [
+        "Carl_Joshua_B_6071_2430"
+      ],
+      "count": 2
+    },
+    {
+      "key": "jayko c.|evening run|1487.0|1143|1143|6.2",
+      "keep": "Jayko_C__1487",
+      "deletes": [
+        "Jayko_C_1487_1143"
+      ],
+      "count": 2
+    },
+    {
+      "key": "jeff p.|morning run|1256.0|930|930|0.0",
+      "keep": "Jeff_P__1256",
+      "deletes": [
+        "Jeff_P_1256_930"
+      ],
+      "count": 2
+    },
+    {
+      "key": "jeff p.|evening run|2092.0|1631|1631|0.0",
+      "keep": "Jeff_P__2092",
+      "deletes": [
+        "Jeff_P_2092_1631"
+      ],
+      "count": 2
+    },
+    {
+      "key": "jeff p.|morning run|5026.0|2381|2381|0.0",
+      "keep": "Jeff_P__5026",
+      "deletes": [
+        "Jeff_P_5026_2381"
+      ],
+      "count": 2
+    },
+    {
+      "key": "jeff p.|evening run|6014.0|5082|5082|0.0",
+      "keep": "Jeff_P__6014",
+      "deletes": [
+        "Jeff_P_6014_5082"
+      ],
+      "count": 2
+    },
+    {
+      "key": "jeff p.|evening run|6120.0|4645|4645|0.0",
+      "keep": "Jeff_P__6120",
+      "deletes": [
+        "Jeff_P_6120_4645"
+      ],
+      "count": 2
+    },
+    {
+      "key": "ralph jayson d.|evening run|260.0|129|129|0.0",
+      "keep": "Ralph_Jayson_D__260",
+      "deletes": [
+        "Ralph_Jayson_D_260_129"
+      ],
+      "count": 2
+    },
+    {
+      "key": "ralph w.|morning run|5067.0|2447|2447|21.2",
+      "keep": "Ralph_W__5067",
+      "deletes": [
+        "Ralph_W_5067_2447"
+      ],
+      "count": 2
+    }
+  ]
+}

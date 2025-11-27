@@ -1684,6 +1684,140 @@ app.post('/admin/normalize-raw-activities', async (req, res) => {
   }
 });
 
+// Admin: Prune raw_activities down to one canonical record per group.
+// This is more aggressive than 'cleanup-raw-activities' and groups items by
+// athlete + date + rounded distance. Use dry_run=true to preview. Defaults
+// to rounding to the nearest 3.5 meters (which matches the 'canonical' snapshot).
+app.post('/admin/prune-raw-to-canonical', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const dryRun = (req.query && (req.query.dry_run === '1' || req.query.dry_run === 'true')) || (req.body && req.body.dry_run);
+    const roundUnit = Number(req.body && req.body.round_unit) || Number(req.query && req.query.round_unit) || 3.5;
+    const dateOnly = req.body && typeof req.body.date_only !== 'undefined' ? !!req.body.date_only : true;
+    const createBackup = req.body && typeof req.body.create_backup !== 'undefined' ? !!req.body.create_backup : true;
+
+    console.log('Starting prune-raw-to-canonical (dryRun=', !!dryRun, ', roundUnit=', roundUnit, ', dateOnly=', dateOnly, ')');
+
+    const snap = await db.collection('raw_activities').get();
+    if (!snap || snap.empty) return res.json({ ok: true, deleted: 0, kept: 0, total: 0 });
+
+    // Normalize and build grouping key (athlete id/name || date-only start_date || rounded distance)
+    const normalizeName = (d) => {
+      if (!d) return '';
+      if (d.athlete && typeof d.athlete === 'object') {
+        const fn = d.athlete.firstname || d.athlete.first_name || '';
+        const ln = d.athlete.lastname || d.athlete.last_name || '';
+        const full = (fn + ' ' + ln).trim();
+        if (full) return full.toString().trim();
+      }
+      if (d.athlete_name) return d.athlete_name.toString().trim();
+      return d.athlete_id ? String(d.athlete_id || '') : '';
+    };
+
+    const datePart = (s) => {
+      if (!s) return '';
+      try { return dateOnly ? String(s).slice(0, 10) : String(s); } catch (e) { return String(s); }
+    };
+
+    const roundNearest = (n, unit) => {
+      if (!Number.isFinite(Number(n))) return 0;
+      return Math.round(Number(n) / unit) * unit;
+    };
+
+    const groups = new Map();
+    snap.docs.forEach(doc => {
+      const d = Object.assign({}, doc.data());
+      // make sure distance exists in some shape
+      const rawDistance = Number(d.distance || d.distance_m || d.distanceMeters || 0);
+      const rounded = roundNearest(rawDistance, roundUnit);
+      const name = (normalizeName(d) || '').toLowerCase();
+      const keyParts = [name || '', datePart(d.start_date || d.start_date_local || d.start_date_local_time || ''), String(rounded)];
+      const key = keyParts.map(s => (s || '').toString().toLowerCase().replace(/\s+/g,' ').trim()).join('|');
+      if (!key) return; // skip unknowable rows
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ id: doc.id, data: d });
+    });
+
+    // Decide which docs to keep (prefer strava_id, then strava_api source, else earliest updated_at)
+    const toDelete = [];
+    const preview = [];
+    let groupCount = 0;
+    for (const [key, list] of groups.entries()) {
+      groupCount++;
+      if (!Array.isArray(list) || list.length <= 1) continue;
+      // choose keep
+      let keep = list[0];
+      const withStravaId = list.find(it => it.data && (it.data.strava_id || it.data.stravaId));
+      if (withStravaId) keep = withStravaId;
+      else {
+        const withStravaSource = list.find(it => it.data && it.data.source && String(it.data.source).toLowerCase().includes('strava'));
+        if (withStravaSource) keep = withStravaSource;
+        else {
+          // earliest updated_at or created_at
+          let earliest = list[0];
+          for (const it of list) {
+            const ts = Number(it.data && (it.data.updated_at || it.data.fetched_at || it.data.created_at) || Number.MAX_SAFE_INTEGER);
+            const bestTs = Number(earliest.data && (earliest.data.updated_at || earliest.data.fetched_at || earliest.data.created_at) || Number.MAX_SAFE_INTEGER);
+            if (ts < bestTs) earliest = it;
+          }
+          keep = earliest;
+        }
+      }
+
+      const deletes = list.filter(x => x.id !== keep.id).map(x => x.id);
+      if (deletes.length) {
+        toDelete.push(...deletes);
+        preview.push({ key, keep: keep.id, deletes, count: list.length });
+      }
+    }
+
+    // If dry run, return preview
+    if (dryRun) {
+      const kept = snap.size - toDelete.length;
+      return res.json({ ok: true, total: snap.size, groups: groups.size, kept, deleted: toDelete.length, dry_run: true, preview: preview.slice(0, 200) });
+    }
+
+    // Non-dry run: backup (if requested) and delete
+    const batchSize = 500;
+    let deleted = 0;
+
+    if (createBackup && toDelete.length > 0) {
+      // Copy each doc to raw_activities_backup before deletion (preserve original id by adding suffix if exists)
+      for (let i = 0; i < toDelete.length; i += batchSize) {
+        const batch = db.batch();
+        const slice = toDelete.slice(i, i + batchSize);
+        // read documents to back them up
+        const docs = await Promise.all(slice.map(id => db.collection('raw_activities').doc(id).get()));
+        docs.forEach((docSnap) => {
+          if (!docSnap || !docSnap.exists) return;
+          const d = docSnap.data();
+          const backupId = `${docSnap.id}_${Date.now()}`;
+          const ref = db.collection('raw_activities_backup').doc(backupId);
+          const payload = Object.assign({}, d, { original_id: docSnap.id, backed_up_at: Date.now(), backup_reason: 'prune_to_canonical' });
+          batch.set(ref, payload);
+        });
+        await batch.commit();
+      }
+    }
+
+    // Now perform deletes
+    for (let i = 0; i < toDelete.length; i += batchSize) {
+      const batch = db.batch();
+      const slice = toDelete.slice(i, i + batchSize);
+      slice.forEach(id => batch.delete(db.collection('raw_activities').doc(id)));
+      await batch.commit();
+      deleted += slice.length;
+    }
+
+    const kept = snap.size - deleted;
+    console.log(`Prune complete. Deleted ${deleted}, kept ${kept} (groups=${groups.size}, total=${snap.size})`);
+    return res.json({ ok: true, deleted, kept, total: snap.size, groups: groups.size, preview: preview.slice(0,200) });
+  } catch (e) {
+    console.error('Prune failed', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
 // Admin: Export raw_activities + raw_activities_backup as combined JSON
 app.get('/admin/export-raw-activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
