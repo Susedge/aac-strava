@@ -1468,19 +1468,26 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
         continue;
       }
 
-      // If none of the docs have any timestamp fields, skip deleting to avoid removing
-      // ambiguous records (we don't want to delete arbitrarily when timestamps are missing).
-      const anyHasTs = list.some(item => tsOf(item.data) !== Number.MAX_SAFE_INTEGER);
-      if (!anyHasTs) {
-        console.log(`Skipping duplicate key '${key}' because no timestamp fields were found on its ${list.length} docs`);
-        continue;
-      }
-
-      // Choose the doc to keep: the one with the smallest timestamp (oldest). Documents with missing
-      // timestamps are treated as very large and will not be preferred as the one to keep.
+      // Choose the doc to keep. If there are any timestamp fields we prefer the oldest
+      // (smallest ts). When no timestamps are present we still want to aggressively
+      // remove immediate duplicates — in that case select a preferred candidate to keep
+      // using a safe heuristic: prefer records with a `strava_id`, then prefer source
+      // 'strava_api', otherwise fall back to the first item.
       let keep = list[0];
-      for (const item of list) {
-        if (tsOf(item.data) < tsOf(keep.data)) keep = item;
+      const hasAnyTs = list.some(item => tsOf(item.data) !== Number.MAX_SAFE_INTEGER);
+      if (hasAnyTs) {
+        for (const item of list) {
+          if (tsOf(item.data) < tsOf(keep.data)) keep = item;
+        }
+      } else {
+        // No timestamps — pick the best candidate to keep
+        const withStravaId = list.find(item => item.data && item.data.strava_id);
+        if (withStravaId) keep = withStravaId;
+        else {
+          const withStravaSource = list.find(item => item.data && (item.data.source === 'strava_api' || (item.data.source && String(item.data.source).toLowerCase().includes('strava'))));
+          if (withStravaSource) keep = withStravaSource;
+          else keep = list[0];
+        }
       }
 
       // Mark all others for deletion
