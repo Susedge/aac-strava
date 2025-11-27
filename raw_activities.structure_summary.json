@@ -1,0 +1,92 @@
+{
+  "total": 519,
+  "distinctStructures": 5,
+  "groups": [
+    {
+      "signature": "athlete_id,athlete_name,distance,elevation_gain,fetched_at,id,moving_time,name,source,type,updated_at",
+      "count": 308,
+      "sample": [
+        {
+          "id": "Aljohn_E__1132",
+          "index": 26
+        },
+        {
+          "id": "Aljohn_E__1320",
+          "index": 27
+        },
+        {
+          "id": "Aljohn_E__1630",
+          "index": 28
+        }
+      ]
+    },
+    {
+      "signature": "athlete_id,athlete_name,distance,elapsed_time,elevation_gain,fetched_at,id,moving_time,name,source,sport_type,type,updated_at,workout_type",
+      "count": 192,
+      "sample": [
+        {
+          "id": "Aljohn_E_1132_1089",
+          "index": 2
+        },
+        {
+          "id": "Aljohn_E_1320_1212",
+          "index": 3
+        },
+        {
+          "id": "Aljohn_E_1704_1238",
+          "index": 4
+        }
+      ]
+    },
+    {
+      "signature": "athlete_id,athlete_name,distance,elevation_gain,fetched_at,id,moving_time,name,source,start_date,type,updated_at",
+      "count": 11,
+      "sample": [
+        {
+          "id": "Arsel_V__2025-10-28T07_19_54_108Z_5009_1",
+          "index": 72
+        },
+        {
+          "id": "Carl_Joshua_B__2025-10-28T07_19_54_110Z_5778_7",
+          "index": 152
+        },
+        {
+          "id": "Jayko_C__2025-10-28T07_19_54_110Z_3722_1",
+          "index": 319
+        }
+      ]
+    },
+    {
+      "signature": "athlete_id,athlete_name,created_at,distance,elevation_gain,id,moving_time,name,source,start_date,type,updated_at",
+      "count": 6,
+      "sample": [
+        {
+          "id": "2G18cHXMzejqfRNN21sD",
+          "index": 0
+        },
+        {
+          "id": "HQlK3OvQmifNIE8fnuig",
+          "index": 257
+        },
+        {
+          "id": "OAxk5eP3k4ZS9J7gzjUI",
+          "index": 431
+        }
+      ]
+    },
+    {
+      "signature": "athlete_id,athlete_name,created_at,distance,elevation_gain,fetched_at,id,moving_time,name,source,start_date,type,updated_at",
+      "count": 2,
+      "sample": [
+        {
+          "id": "8eSdR0wXq4xJdAjmwJk2",
+          "index": 1
+        },
+        {
+          "id": "a7nT9p7hOcqznzGIWNYJ",
+          "index": 481
+        }
+      ]
+    }
+  ]
+}

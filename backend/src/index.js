@@ -1818,6 +1818,71 @@ app.post('/admin/prune-raw-to-canonical', async (req, res) => {
   }
 });
 
+// Admin: Remove all raw_activities documents that exactly match a particular
+// structural signature discovered in data (the '192' group). Use dry_run=1 to preview.
+app.post('/admin/prune-raw-activities-192', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const dryRun = (req.query && (req.query.dry_run === '1' || req.query.dry_run === 'true')) || (req.body && req.body.dry_run);
+    const createBackup = req.body && typeof req.body.create_backup !== 'undefined' ? !!req.body.create_backup : true;
+
+    // Signature to target (sorted keys)
+    const targetSig = 'athlete_id,athlete_name,distance,elapsed_time,elevation_gain,fetched_at,id,moving_time,name,source,sport_type,type,updated_at,workout_type';
+
+    console.log('Starting prune-raw-activities-192 (dryRun=', !!dryRun, ', createBackup=', createBackup, ')');
+
+    const snap = await db.collection('raw_activities').get();
+    if (!snap || snap.empty) return res.json({ ok: true, deleted: 0, kept: 0, total: 0 });
+
+    const matches = [];
+    snap.docs.forEach(doc => {
+      const data = doc.data() || {};
+      const sig = Object.keys(data).sort().join(',');
+      if (sig === targetSig) matches.push({ id: doc.id, data });
+    });
+
+    if (dryRun) return res.json({ ok: true, total: snap.size, matches: matches.length, preview: matches.slice(0, 200).map(m => m.id), dry_run: true });
+
+    if (matches.length === 0) return res.json({ ok: true, deleted: 0, kept: snap.size, total: snap.size });
+
+    const toDelete = matches.map(m => m.id);
+    const batchSize = 500;
+    let deleted = 0;
+
+    // backup before deleting if requested
+    if (createBackup) {
+      for (let i = 0; i < toDelete.length; i += batchSize) {
+        const slice = toDelete.slice(i, i + batchSize);
+        const docs = await Promise.all(slice.map(id => db.collection('raw_activities').doc(id).get()));
+        const batch = db.batch();
+        docs.forEach(docSnap => {
+          if (!docSnap || !docSnap.exists) return;
+          const payload = Object.assign({}, docSnap.data(), { original_id: docSnap.id, backed_up_at: Date.now(), backup_reason: 'prune_192_signature' });
+          const backupId = `${docSnap.id}_${Date.now()}`;
+          batch.set(db.collection('raw_activities_backup').doc(backupId), payload);
+        });
+        await batch.commit();
+      }
+    }
+
+    // delete in batches
+    for (let i = 0; i < toDelete.length; i += batchSize) {
+      const batch = db.batch();
+      const slice = toDelete.slice(i, i + batchSize);
+      slice.forEach(id => batch.delete(db.collection('raw_activities').doc(id)));
+      await batch.commit();
+      deleted += slice.length;
+    }
+
+    const kept = snap.size - deleted;
+    console.log(`prune-raw-activities-192 complete. Deleted ${deleted}, kept ${kept} (total=${snap.size})`);
+    return res.json({ ok: true, deleted, kept, total: snap.size });
+  } catch (e) {
+    console.error('prune-raw-activities-192 failed', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
 // Admin: Export raw_activities + raw_activities_backup as combined JSON
 app.get('/admin/export-raw-activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
