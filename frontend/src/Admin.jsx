@@ -647,6 +647,7 @@ export default function Admin(){
                   <button className="btn btn-ghost" onClick={handleRestoreBackup}>Restore Backup</button>
                   <button className="btn btn-ghost" onClick={runAggregation}>Run Aggregation</button>
                   <button className="btn btn-ghost" onClick={() => handlePreviewCleanup()}>Preview Cleanup</button>
+                  <button className="btn btn-ghost" onClick={() => handleExportRawActivities()}>Export Raw Activities</button>
                   <button className="btn btn-ghost" onClick={handleCleanup}>Cleanup Duplicates</button>
                 </div>
               </div>
@@ -902,6 +903,34 @@ export default function Admin(){
     }catch(e){
       console.error('Preview failed', e)
       alert('Preview error: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
+  async function handleExportRawActivities(){
+    if (!confirm('This will download a combined JSON export of raw_activities and raw_activities_backup. Continue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Exporting activities…')
+      // request download response and stream blob
+      const res = await fetch(`${API}/admin/export-raw-activities?download=1`, { method: 'GET' })
+      if (!res.ok) throw new Error('Export failed')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.style.display = 'none'
+      a.href = url
+      const name = `raw_activities_export_${new Date().toISOString().replace(/[:.]/g,'-')}.json`
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    }catch(e){
+      console.error('Export failed', e)
+      alert('Export error: ' + e.message)
     }finally{
       setAdminBusy(false)
       setAdminBusyMsg('')

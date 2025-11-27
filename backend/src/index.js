@@ -1588,6 +1588,34 @@ app.post('/admin/restore-backup', async (req, res) => {
   }
 });
 
+// Admin: Export raw_activities + raw_activities_backup as combined JSON
+app.get('/admin/export-raw-activities', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    const rawSnap = await db.collection('raw_activities').get();
+    const backupSnap = await db.collection('raw_activities_backup').get();
+
+    const raw = rawSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const backup = backupSnap && !backupSnap.empty ? backupSnap.docs.map(d => ({ id: d.id, ...d.data() })) : [];
+
+    const payload = { exported_at: Date.now(), raw_activities: raw, raw_activities_backup: backup };
+
+    // Support download response for browser (attachment)
+    const wantDownload = (req.query && (req.query.download === '1' || req.query.download === 'true')) || (req.body && req.body.download);
+    if (wantDownload) {
+      const filename = `aac_raw_activities_export_${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(JSON.stringify(payload));
+    }
+
+    return res.json(payload);
+  } catch (e) {
+    console.error('Export failed', e);
+    return res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
 // Admin: Add a new manual activity (using athlete name)
 app.post('/admin/raw-activities', async (req, res) => {
   if (!db) return res.status(500).json({ error: 'firestore not initialized' });
