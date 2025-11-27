@@ -1827,7 +1827,7 @@ app.post('/admin/prune-raw-activities-192', async (req, res) => {
     const createBackup = req.body && typeof req.body.create_backup !== 'undefined' ? !!req.body.create_backup : true;
 
     // Signature to target (sorted keys)
-    const targetSig = 'athlete_id,athlete_name,distance,elapsed_time,elevation_gain,fetched_at,id,moving_time,name,source,sport_type,type,updated_at,workout_type';
+    const requiredKeys = ['athlete_id','athlete_name','distance','elapsed_time','elevation_gain','fetched_at','id','moving_time','name','source','sport_type','type','updated_at','workout_type'];
 
     console.log('Starting prune-raw-activities-192 (dryRun=', !!dryRun, ', createBackup=', createBackup, ')');
 
@@ -1835,13 +1835,22 @@ app.post('/admin/prune-raw-activities-192', async (req, res) => {
     if (!snap || snap.empty) return res.json({ ok: true, deleted: 0, kept: 0, total: 0 });
 
     const matches = [];
+    // Find docs that contain the required key set. Use a tolerant check so
+    // minor variations (ordering, extra keys, extra fields) won't prevent
+    // detection. We allow documents that have at least (requiredKeys.length - 1)
+    // of the required fields to match — this helps match near-identical docs
+    // stored in Firestore where some fields may be null or occasionally missing.
     snap.docs.forEach(doc => {
       const data = doc.data() || {};
-      const sig = Object.keys(data).sort().join(',');
-      if (sig === targetSig) matches.push({ id: doc.id, data });
+      const keys = Object.keys(data).map(k => String(k));
+      const keySet = new Set(keys);
+      const presentCount = requiredKeys.reduce((c, k) => c + (keySet.has(k) ? 1 : 0), 0);
+      const matchThreshold = Math.max(0, requiredKeys.length - 1); // allow one missing
+      if (presentCount >= matchThreshold) matches.push({ id: doc.id, data, presentCount });
     });
 
-    if (dryRun) return res.json({ ok: true, total: snap.size, matches: matches.length, preview: matches.slice(0, 200).map(m => m.id), dry_run: true });
+    // Provide additional visibility in dry run: how many keys each match has
+    if (dryRun) return res.json({ ok: true, total: snap.size, matches: matches.length, preview: matches.slice(0, 200).map(m => ({ id: m.id, presentCount: m.presentCount })), dry_run: true });
 
     if (matches.length === 0) return res.json({ ok: true, deleted: 0, kept: snap.size, total: snap.size });
 
