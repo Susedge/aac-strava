@@ -509,7 +509,7 @@ export default function Admin(){
     try{
       setAdminBusy(true)
       setAdminBusyMsg('Cleaning up duplicates…')
-      const res = await fetch(`${API}/admin/cleanup-raw-activities`, { method: 'POST' })
+      const res = await fetch(`${API}/admin/cleanup-raw-activities`, { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({ dry_run: false }) })
       if (!res.ok) throw new Error('Cleanup failed')
       const j = await res.json()
       alert(`Cleanup complete. Deleted ${j.deleted || 0} duplicate activities, kept ${j.kept || 0}.`)
@@ -646,6 +646,7 @@ export default function Admin(){
                   <button className="btn btn-ghost" onClick={handleBulkImport}>Import CSV</button>
                   <button className="btn btn-ghost" onClick={handleRestoreBackup}>Restore Backup</button>
                   <button className="btn btn-ghost" onClick={runAggregation}>Run Aggregation</button>
+                  <button className="btn btn-ghost" onClick={() => handlePreviewCleanup()}>Preview Cleanup</button>
                   <button className="btn btn-ghost" onClick={handleCleanup}>Cleanup Duplicates</button>
                 </div>
               </div>
@@ -881,3 +882,28 @@ export default function Admin(){
     </div>
   )
 }
+
+  async function handlePreviewCleanup(){
+    if (!confirm('This will preview which duplicate records WOULD be removed (dry-run). Continue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Previewing duplicates…')
+      const res = await fetch(`${API}/admin/cleanup-raw-activities?dry_run=1`, { method: 'POST' })
+      if (!res.ok) throw new Error('Preview failed')
+      const j = await res.json()
+      if (!j || !Array.isArray(j.preview)) return alert('No preview data returned')
+      // Summarize preview — report counts and show up to 5 groups
+      const totalCandidates = j.deleted || 0
+      const keep = j.kept || 0
+      const summary = [`Preview mode: ${j.preview.length} groups with duplicates found`, `Would delete ${totalCandidates} documents, keep ${keep}`]
+      j.preview.slice(0,5).forEach(g => summary.push(`Group key: ${g.key} keep: ${g.keep} delete: ${g.deletes.join(', ')}`))
+      if (j.preview.length > 5) summary.push(`...and ${j.preview.length-5} more groups`)
+      alert(summary.join('\n\n'))
+    }catch(e){
+      console.error('Preview failed', e)
+      alert('Preview error: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }

@@ -1422,22 +1422,27 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
       const activityName = (data.name || '').toString().trim();
       const athleteId = data.athlete && (data.athlete.id || data.athlete.id_str || data.athlete_id) ? String(data.athlete.id || data.athlete.id_str || data.athlete_id) : '';
 
-      // Exact duplication uses the precise numeric fields (no rounding) to avoid
-      // collisions across distinct activities. Keep names/athlete for added safety.
+      // Normalize numeric fields to avoid superficial differences in formatting
+      // from preventing exact-duplicate detection. Distance & elevation are kept
+      // to one decimal place; times are integers (seconds).
       const rawDistanceMeters = Number(data.distance || data.distance_m || 0);
-      const moving_time = Number(data.moving_time || 0);
-      const elapsed_time = Number(data.elapsed_time || 0);
-      const elev = Number(data.total_elevation_gain || data.elevation_gain || data.elev_total || 0);
+      const distanceKey = (Number.isFinite(rawDistanceMeters) ? (Math.round(rawDistanceMeters * 10) / 10).toFixed(1) : '0.0');
+      const moving_time = Math.round(Number(data.moving_time || 0));
+      const elapsed_time = Math.round(Number(data.elapsed_time || 0));
+      const elevRaw = Number(data.total_elevation_gain || data.elevation_gain || data.elev_total || 0);
+      const elev = Number.isFinite(elevRaw) ? (Math.round(elevRaw * 10) / 10).toFixed(1) : '0.0';
       const type = (data.type || '').toString().trim();
       const sport_type = (data.sport_type || '').toString().trim();
       const workout_type = (data.workout_type !== undefined && data.workout_type !== null) ? String(data.workout_type) : '';
 
-      // Build a very strict key representing the immediate-data values we want to
-      // treat as duplicates. We prefer athlete_id when present to avoid name collisions.
+      // Build a strict key representing immediate-duplicate attributes. Prefer
+      // the normalized athlete name for grouping when available so docs that have
+      // athlete_id in one record and only athlete_name in another still match.
+      const athleteNameNormalized = ((data.athlete_name || ((fn + ' ' + ln).trim())) || '').toString().trim();
       const parts = [
-        athleteId || (fn + ' ' + ln).trim(),
+        athleteNameNormalized ? athleteNameNormalized : String(athleteId || ''),
         activityName,
-        String(rawDistanceMeters),
+        String(distanceKey),
         String(moving_time),
         String(elapsed_time),
         String(elev)
@@ -1458,6 +1463,7 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
     });
 
     const toDelete = [];
+    const previewGroups = [];
 
     // Helper to compute timestamp for ordering (prefer older = smaller value)
     const tsOf = (d) => Number(d && (d.created_at || d.fetched_at || d.updated_at) || Number.MAX_SAFE_INTEGER);
@@ -1491,9 +1497,19 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
       }
 
       // Mark all others for deletion
+      const deleteForThis = [];
       for (const item of list) {
-        if (item.id !== keep.id) toDelete.push(item.id);
+        if (item.id !== keep.id) { toDelete.push(item.id); deleteForThis.push(item.id); }
       }
+
+      // Keep a simple preview item for dry-run reporting
+      previewGroups.push({ key, keep: keep.id, deletes: deleteForThis, count: list.length });
+    }
+
+    // If dry-run requested, return preview details and DO NOT delete
+    const dryRun = (req.query && (req.query.dry_run === '1' || req.query.dry_run === 'true')) || (req.body && req.body.dry_run);
+    if (dryRun) {
+      return res.json({ ok: true, deleted: toDelete.length, kept: snaps.size - toDelete.length, dry_run: true, preview: previewGroups });
     }
 
     // Perform deletions in batches of 500 (if any)

@@ -48,6 +48,9 @@ Populate aggregated data
 
 	- The backend exposes POST /aggregate/weekly which will iterate stored athletes and fetch their activities from Strava for the last 7 days and write to Firestore `activities` collection (and save summary athlete records in `summary_athletes`). This aggregation step produces a cached leaderboard used by the frontend — the frontend reads the pre-computed `activities` documents instead of recomputing from raw_activities on every page load so the leaderboard is fast.
 	- Important: aggregation stores raw activity documents in `raw_activities` in an append-only fashion. The aggregator will only update an existing `raw_activities` document when there is a definitive match (for example the Strava activity id or an exact athlete+start_date match). For fuzzy/near matches aggregation will not overwrite or replace existing documents — it will create new documents instead to preserve duplicates and avoid accidental data loss.
+	 - Admin: Cleanup duplicates now supports a preview (dry-run) and uses stricter normalization to detect immediate duplicates.
+		 - POST /admin/cleanup-raw-activities?dry_run=1 will return a preview of duplicate groups and which documents would be deleted without performing deletion.
+		 - Cleanup groups are derived from athlete name (prefers name over id when available), activity name, distance (normalized to 1 decimal), moving_time (seconds), elapsed_time (seconds), and elevation (1 decimal). This balances robustness (avoid false negatives from float formatting) and safety (only immediate duplicates are targeted).
 	- Performance optimization: each aggregation now writes a single snapshot document into `leaderboard_snapshots/latest` (and a timestamped archive). The frontend will prefer this single-document snapshot for leaderboard reads to avoid heavy reads during page load.
 	- Call it manually (e.g. using curl or Postman) or wire it to a scheduler (Cloud Functions, cron, GitHub Actions).
 
