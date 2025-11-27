@@ -505,14 +505,23 @@ export default function Admin(){
   }
 
   async function handleCleanup(){
-    if (!confirm('This will remove duplicate raw activity records. Continue?')) return
+    if (!confirm('This will normalize raw_activities and then remove duplicate raw activity records. Continue?')) return
     try{
       setAdminBusy(true)
+      setAdminBusyMsg('Normalizing records…')
+
+      // First normalize records (so fields like distance/moving_time/elevation are present)
+      const normRes = await fetch(`${API}/admin/normalize-raw-activities`, { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({ dry_run: false }) })
+      if (!normRes.ok) throw new Error('Normalization failed')
+      const normJson = await normRes.json()
+
+      // Then run cleanup (now duplicates are easier to detect)
       setAdminBusyMsg('Cleaning up duplicates…')
       const res = await fetch(`${API}/admin/cleanup-raw-activities`, { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({ dry_run: false }) })
       if (!res.ok) throw new Error('Cleanup failed')
       const j = await res.json()
-      alert(`Cleanup complete. Deleted ${j.deleted || 0} duplicate activities, kept ${j.kept || 0}.`)
+
+      alert(`Normalization updated ${normJson.normalized || 0}/${normJson.total || 0} docs.\nCleanup complete. Deleted ${j.deleted || 0} duplicate activities, kept ${j.kept || 0}.`)
       await loadActivities(true)
     }catch(e){
       console.error('Cleanup failed', e)
@@ -648,6 +657,8 @@ export default function Admin(){
                   <button className="btn btn-ghost" onClick={runAggregation}>Run Aggregation</button>
                   <button className="btn btn-ghost" onClick={() => handlePreviewCleanup()}>Preview Cleanup</button>
                   <button className="btn btn-ghost" onClick={() => handleExportRawActivities()}>Export Raw Activities</button>
+                  <button className="btn btn-ghost" onClick={() => handlePreviewNormalize()}>Preview Normalize</button>
+                  <button className="btn btn-ghost" onClick={() => handleNormalize()}>Normalize Raw Activities</button>
                   <button className="btn btn-ghost" onClick={handleCleanup}>Cleanup Duplicates</button>
                 </div>
               </div>
@@ -931,6 +942,45 @@ export default function Admin(){
     }catch(e){
       console.error('Export failed', e)
       alert('Export error: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
+  async function handlePreviewNormalize(){
+    if (!confirm('Preview normalization of raw_activities (dry-run). Continue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Previewing normalize…')
+      const res = await fetch(`${API}/admin/normalize-raw-activities?dry_run=1`, { method: 'POST' })
+      if (!res.ok) throw new Error('Preview failed')
+      const j = await res.json()
+      if (!j) return alert('Preview returned no data')
+      alert(`Total docs: ${j.total || 0}\nCandidates to update: ${j.count || 0}\nSample: see console`)
+      console.log('normalize preview:', j.candidates || [])
+    }catch(e){
+      console.error('Preview failed', e)
+      alert('Preview failed: ' + e.message)
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
+  async function handleNormalize(){
+    if (!confirm('This will normalize all raw_activities documents (fill missing distance/moving_time/elapsed_time/elevation_gain). Continue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Normalizing activities…')
+      const res = await fetch(`${API}/admin/normalize-raw-activities`, { method: 'POST' })
+      if (!res.ok) throw new Error('Normalize failed')
+      const j = await res.json()
+      alert(`Normalizing complete. Updated ${j.normalized || 0}/${j.total || 0} documents.`)
+      await loadActivities(true)
+    }catch(e){
+      console.error('Normalize failed', e)
+      alert('Normalize failed: ' + e.message)
     }finally{
       setAdminBusy(false)
       setAdminBusyMsg('')

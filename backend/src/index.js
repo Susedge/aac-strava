@@ -466,25 +466,24 @@ app.post('/aggregate/weekly', async (req, res) => {
               const moving_time = Number(act.moving_time || 0);
               const start_date = act.start_date || act.start_date_local || null;
 
+              // Always include canonical fields so documents are uniform across writes.
               const activityDoc = {
-                athlete_id: athleteId,
-                athlete_name: athleteName,
-                distance: distance,
-                moving_time: moving_time,
-                // include Strava's activity id when present (definitive identifier for athlete activities)
+                athlete_id: athleteId || null,
+                athlete_name: athleteName || '',
+                distance: Number(distance || 0),
+                moving_time: Math.round(Number(moving_time || 0)),
+                // elapsed_time always set (fallback to moving_time when missing)
+                elapsed_time: typeof act.elapsed_time !== 'undefined' ? Math.round(Number(act.elapsed_time || 0)) : Math.round(Number(act.moving_time || 0) || 0),
+                // Strava's activity id is the definitive identifier when present
                 ...(act.id ? { strava_id: act.id } : {}),
-                // capture elapsed_time if Strava provides it
-                ...(typeof act.elapsed_time !== 'undefined' ? { elapsed_time: Number(act.elapsed_time || 0) } : {}),
-                // Include start_date when available so edits on Strava (which update start_date)
-                // can be matched and merged instead of creating a new record.
+                // Always include start_date if available
                 ...(start_date ? { start_date } : {}),
-                // Include elapsed_time, sport_type and workout metadata when available
-                ...(typeof act.elapsed_time !== 'undefined' ? { elapsed_time: Number(act.elapsed_time || 0) } : {}),
-                ...(act.sport_type ? { sport_type: act.sport_type } : {}),
-                ...(typeof act.workout_type !== 'undefined' ? { workout_type: act.workout_type } : {}),
+                // Ensure sport_type/workout_type are present (or null)
+                sport_type: act.sport_type || null,
+                workout_type: typeof act.workout_type !== 'undefined' ? act.workout_type : null,
                 type: act.type || 'Run',
                 name: act.name || 'Activity',
-                elevation_gain: Number(act.total_elevation_gain || act.elev_total || 0),
+                elevation_gain: Number(act.total_elevation_gain || act.elev_total || act.elevation_gain || 0),
                 source: 'strava_api',
                 fetched_at: Date.now(),
                 updated_at: Date.now()
@@ -1584,6 +1583,103 @@ app.post('/admin/restore-backup', async (req, res) => {
     res.json({ ok: true, restored, message: `Successfully restored ${restored} activities from backup` });
   } catch (e) {
     console.error('Restore failed', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Admin: Normalize stored raw activities so key fields are always present
+// This helps fix inconsistent documents where some fields (distance, moving_time,
+// elapsed_time, elevation_gain, athlete_name, name) are missing.
+app.post('/admin/normalize-raw-activities', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  const dryRun = (req.query && (req.query.dry_run === '1' || req.query.dry_run === 'true')) || (req.body && req.body.dry_run);
+  try {
+    console.log('Starting normalize raw_activities (dryRun=', !!dryRun, ')');
+    const snap = await db.collection('raw_activities').get();
+    if (!snap || snap.empty) return res.json({ ok: true, normalized: 0, total: 0 });
+
+    const updates = [];
+    const backups = [];
+    snap.docs.forEach(d => {
+      const data = d.data() || {};
+      const norm = {};
+      // athlete_name
+      if (!data.athlete_name && data.athlete && typeof data.athlete === 'object') {
+        const fn = data.athlete.firstname || data.athlete.first_name || '';
+        const ln = data.athlete.lastname || data.athlete.last_name || '';
+        const full = (fn + ' ' + ln).trim();
+        if (full) norm.athlete_name = full;
+      }
+      // athlete_id
+      if (!data.athlete_id && data.athlete && (data.athlete.id || data.athlete.id_str || data.athlete_id)) {
+        norm.athlete_id = String(data.athlete.id || data.athlete.id_str || data.athlete_id);
+      }
+
+      // distance - prefer `distance` or `distance_m` if present, else fallback to 0
+      const dCandidates = [data.distance, data.distance_m, data.distanceMeters, data.distance_meters];
+      const dFound = dCandidates.find(v => typeof v !== 'undefined' && v !== null && v !== '');
+      if (typeof data.distance === 'undefined' && typeof dFound !== 'undefined') {
+        norm.distance = Number(dFound || 0);
+      }
+      if (typeof data.distance === 'undefined' && typeof dFound === 'undefined') {
+        // Ensure distance exists (0 if unknown) so duplicates detection always has it
+        norm.distance = 0;
+      }
+
+      // moving_time
+      if (typeof data.moving_time === 'undefined') {
+        const mt = typeof data.moving_time !== 'undefined' ? data.moving_time : (typeof data.movingTime !== 'undefined' ? data.movingTime : null);
+        if (mt !== null && typeof mt !== 'undefined') norm.moving_time = Math.round(Number(mt || 0));
+        else norm.moving_time = 0;
+      }
+
+      // elapsed_time
+      if (typeof data.elapsed_time === 'undefined') {
+        if (typeof data.elapsed_time !== 'undefined') norm.elapsed_time = Number(data.elapsed_time || 0);
+        else if (typeof data.moving_time !== 'undefined') norm.elapsed_time = Math.round(Number(data.moving_time || 0));
+        else norm.elapsed_time = 0;
+      }
+
+      // elevation_gain
+      if (typeof data.elevation_gain === 'undefined') {
+        const egCandidates = [data.total_elevation_gain, data.elev_total, data.elevation];
+        const eg = egCandidates.find(v => typeof v !== 'undefined' && v !== null);
+        norm.elevation_gain = Number(eg || 0);
+      }
+
+      // name
+      if (!data.name) norm.name = data.type ? `${data.type} Activity` : 'Activity';
+
+      // type defaults
+      if (!data.type) norm.type = 'Run';
+
+      // sport_type/workout_type for completeness
+      if (typeof data.sport_type === 'undefined' && data.type) norm.sport_type = data.type;
+      if (typeof data.workout_type === 'undefined') norm.workout_type = data.workout_type || null;
+
+      // timestamps
+      if (!data.updated_at) norm.updated_at = Date.now();
+
+      // If there are keys to set, capture update
+      if (Object.keys(norm).length > 0) updates.push({ id: d.id, set: norm });
+    });
+
+    if (dryRun) return res.json({ ok: true, total: snap.size, candidates: updates.slice(0, 200), count: updates.length });
+
+    // Perform batched updates
+    let done = 0;
+    const batchSize = 500;
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = db.batch();
+      const slice = updates.slice(i, i + batchSize);
+      slice.forEach(u => batch.set(db.collection('raw_activities').doc(u.id), u.set, { merge: true }));
+      await batch.commit();
+      done += slice.length;
+    }
+
+    res.json({ ok: true, normalized: done, total: snap.size });
+  } catch (e) {
+    console.error('Normalization failed', e);
     res.status(500).json({ error: e.message || String(e) });
   }
 });

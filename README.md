@@ -51,6 +51,9 @@ Populate aggregated data
 	 - Admin: Cleanup duplicates now supports a preview (dry-run) and uses stricter normalization to detect immediate duplicates.
 		 - POST /admin/cleanup-raw-activities?dry_run=1 will return a preview of duplicate groups and which documents would be deleted without performing deletion.
 		 - Cleanup groups are derived from athlete name (prefers name over id when available), activity name, distance (normalized to 1 decimal), moving_time (seconds), elapsed_time (seconds), and elevation (1 decimal). This balances robustness (avoid false negatives from float formatting) and safety (only immediate duplicates are targeted).
+	 - Admin: Normalize raw activities
+		 - POST /admin/normalize-raw-activities will scan `raw_activities` and fill missing canonical fields (distance, moving_time, elapsed_time, elevation_gain, athlete_name, name, etc.) so stored documents are uniform and easier to deduplicate.
+		 - Call with `?dry_run=1` or body { dry_run: true } to preview changes without modifying data.
 	- Performance optimization: each aggregation now writes a single snapshot document into `leaderboard_snapshots/latest` (and a timestamped archive). The frontend will prefer this single-document snapshot for leaderboard reads to avoid heavy reads during page load.
 	- Call it manually (e.g. using curl or Postman) or wire it to a scheduler (Cloud Functions, cron, GitHub Actions).
 
