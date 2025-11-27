@@ -1398,10 +1398,11 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
   try {
     const snaps = await db.collection('raw_activities').get();
 
-    // Build a duplicate key using the exact fields requested by the user.
-    // This uses resource_state, athlete.{resource_state,firstname,lastname}, name,
-    // distance (in km rounded to 2 decimals), the longest of moving_time/elapsed_time,
-    // elapsed_time, total_elevation_gain, type, sport_type, workout_type.
+    // Build a duplicate key based on *exact*-match fields for immediate duplicate removal:
+    // we want to remove records that are exact duplicates for distance, moving_time,
+    // elapsed_time, and total_elevation_gain (optionally match name and athlete identity).
+    // This is intentionally stricter than the previous fuzzy grouping — Cleanup should
+    // remove immediate duplicates only (no fuzzy merging).
     const buildDupKey = (data) => {
       if (!data) return null;
       // Athlete identity: prefer structured athlete object when available, else parse athlete_name
@@ -1418,36 +1419,28 @@ app.post('/admin/cleanup-raw-activities', async (req, res) => {
         ln = parts.slice(1).join(' ') || '';
       }
 
-      const resourceState = (data.resource_state !== undefined && data.resource_state !== null) ? String(data.resource_state) : '';
       const activityName = (data.name || '').toString().trim();
+      const athleteId = data.athlete && (data.athlete.id || data.athlete.id_str || data.athlete_id) ? String(data.athlete.id || data.athlete.id_str || data.athlete_id) : '';
 
-      // Normalize distance to kilometers with two-decimal precision for dedupe key
+      // Exact duplication uses the precise numeric fields (no rounding) to avoid
+      // collisions across distinct activities. Keep names/athlete for added safety.
       const rawDistanceMeters = Number(data.distance || data.distance_m || 0);
-      const distance_km = Math.round((rawDistanceMeters / 1000) * 100) / 100; // e.g. 4.12
-
-      // Use the longest reported time between moving_time and elapsed_time to be robust
       const moving_time = Number(data.moving_time || 0);
       const elapsed_time = Number(data.elapsed_time || 0);
-      const time_for_key = Math.max(moving_time || 0, elapsed_time || 0);
-
       const elev = Number(data.total_elevation_gain || data.elevation_gain || data.elev_total || 0);
       const type = (data.type || '').toString().trim();
       const sport_type = (data.sport_type || '').toString().trim();
       const workout_type = (data.workout_type !== undefined && data.workout_type !== null) ? String(data.workout_type) : '';
 
+      // Build a very strict key representing the immediate-data values we want to
+      // treat as duplicates. We prefer athlete_id when present to avoid name collisions.
       const parts = [
-        resourceState,
-        athleteResourceState,
-        fn,
-        ln,
+        athleteId || (fn + ' ' + ln).trim(),
         activityName,
-        String(distance_km),
-        String(time_for_key),
-        String(elapsed_time || ''),
-        String(elev),
-        type,
-        sport_type,
-        workout_type
+        String(rawDistanceMeters),
+        String(moving_time),
+        String(elapsed_time),
+        String(elev)
       ];
 
       // Lowercase and join into a stable key

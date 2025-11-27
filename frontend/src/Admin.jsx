@@ -21,6 +21,7 @@ export default function Admin(){
   
   // Activity management state
   const [activities, setActivities] = useState([])
+  const [activityCache, setActivityCache] = useState([]) // cache all activities client-side so filtering is local
   const [activitiesLoading, setActivitiesLoading] = useState(false)
   const [adminBusy, setAdminBusy] = useState(false)
   const [adminBusyMsg, setAdminBusyMsg] = useState('')
@@ -44,7 +45,7 @@ export default function Admin(){
     setAuthed(!!ok)
     if (ok) {
       load()
-      loadActivities()
+      loadActivities(true)
     }
   }, [])
 
@@ -310,31 +311,78 @@ export default function Admin(){
   // ACTIVITY MANAGEMENT FUNCTIONS
   // ============================================================================
   
-  async function loadActivities(){
+  // Load activities from the server and populate the client cache. When force === false
+  // we only fetch if we don't yet have a cache; otherwise we use cached data for filtering.
+  async function loadActivities(force = false){
     setActivitiesLoading(true)
     try{
-      const params = new URLSearchParams()
-      if (activityFilter) params.append('athlete_name', activityFilter)
-      if (activitySort) params.append('sort_by', activitySort)
-      if (activitySortOrder) params.append('sort_order', activitySortOrder)
-      
-      const url = `${API}/admin/raw-activities${params.toString() ? '?' + params.toString() : ''}`
-      const res = await fetch(url)
+      // If we already have cached activities and no force, don't re-query
+      if (!force && activityCache && activityCache.length > 0) {
+        applyActivityFilterAndSort(activityCache)
+        return
+      }
+
+      const res = await fetch(`${API}/admin/raw-activities`)
       const j = await res.json()
-      setActivities(j.activities || [])
+      const all = j.activities || []
+      setActivityCache(all)
+      applyActivityFilterAndSort(all)
     }catch(e){
       console.error('Failed to load activities', e)
       setActivities([])
+      setActivityCache([])
     }finally{
       setActivitiesLoading(false)
     }
   }
 
+  // Apply current filter/sort to a provided dataset (client-side)
+  function applyActivityFilterAndSort(source = activityCache){
+    if (!Array.isArray(source)) source = []
+    let list = source.slice();
+
+    // Filter by athlete name substring (case-insensitive)
+    if (activityFilter && activityFilter.trim()) {
+      const q = activityFilter.trim().toLowerCase();
+      list = list.filter(a => (String(a.athlete_name || a.athlete_name || '')).toLowerCase().includes(q));
+    }
+
+    // Sort
+    const by = activitySort || 'start_date'
+    const order = activitySortOrder === 'asc' ? 1 : -1
+    list.sort((a,b)=>{
+      let valA, valB
+      switch(by){
+        case 'distance':
+          valA = Number(a.distance || 0)
+          valB = Number(b.distance || 0)
+          break
+        case 'athlete_name':
+          valA = String(a.athlete_name || '').toLowerCase()
+          valB = String(b.athlete_name || '').toLowerCase()
+          break
+        case 'source':
+          valA = String(a.source || '')
+          valB = String(b.source || '')
+          break
+        default:
+          valA = a.start_date ? new Date(a.start_date).getTime() : 0
+          valB = b.start_date ? new Date(b.start_date).getTime() : 0
+      }
+      if (valA > valB) return order
+      if (valA < valB) return -order
+      return 0
+    })
+
+    setActivities(list)
+  }
+
   // Real-time filter: when activityFilter/sort options change, reload activities (debounced)
+  // When filter/sort state changes, apply locally to the cached dataset (debounced).
   useEffect(() => {
     const t = setTimeout(() => {
-      loadActivities()
-    }, 350)
+      applyActivityFilterAndSort()
+    }, 200)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activityFilter, activitySort, activitySortOrder])
@@ -383,7 +431,7 @@ export default function Admin(){
       if (!res.ok) throw new Error('Failed to delete')
       
       alert('Activity deleted')
-      loadActivities()
+      loadActivities(true)
     }catch(e){
       console.error('Failed to delete activity', e)
       alert('Error deleting activity: ' + e.message)
@@ -428,7 +476,7 @@ export default function Admin(){
       
       const result = await res.json()
       alert(`Imported ${result.imported} activities!${result.errors?.length ? ` (${result.errors.length} errors)` : ''}`)
-      loadActivities()
+      loadActivities(true)
     }catch(e){
       console.error('Bulk import failed', e)
       alert('Error importing: ' + e.message)
@@ -446,7 +494,7 @@ export default function Admin(){
       alert(`Aggregation complete! Processed ${result.results?.length || 0} athletes`)
       // refresh lists
       await load()
-      await loadActivities()
+      await loadActivities(true)
     }catch(e){
       console.error('Aggregation failed', e)
       alert('Error: ' + e.message)
@@ -465,7 +513,7 @@ export default function Admin(){
       if (!res.ok) throw new Error('Cleanup failed')
       const j = await res.json()
       alert(`Cleanup complete. Deleted ${j.deleted || 0} duplicate activities, kept ${j.kept || 0}.`)
-      await loadActivities()
+      await loadActivities(true)
     }catch(e){
       console.error('Cleanup failed', e)
       alert('Error: ' + e.message)
@@ -484,7 +532,7 @@ export default function Admin(){
       if (!res.ok) throw new Error('Restore failed')
       const j = await res.json()
       alert(j.message || `Restore complete. Restored ${j.restored || 0} activities.`)
-      await loadActivities()
+      await loadActivities(true)
       await load()
     }catch(e){
       console.error('Restore failed', e)
@@ -522,7 +570,7 @@ export default function Admin(){
             <div className="header-actions">
               <a className="btn btn-ghost" href="/">Back to main</a>
               <a className="btn btn-ghost" href="/connect.html" target="_blank" rel="noopener noreferrer" style={{marginLeft:8}}>Connect</a>
-              <button className="btn btn-ghost" onClick={activeTab === 'members' ? load : loadActivities} style={{marginLeft:8}}>Reload</button>
+              <button className="btn btn-ghost" onClick={() => activeTab === 'members' ? load() : loadActivities(true)} style={{marginLeft:8}}>Reload</button>
             </div>
           </header>
 
@@ -638,7 +686,7 @@ export default function Admin(){
                     <option value="asc">Ascending</option>
                   </select>
                 </div>
-                <button className="btn" onClick={loadActivities}>Apply</button>
+                <button className="btn" onClick={() => applyActivityFilterAndSort()}>Apply</button>
               </div>
 
               {/* Add Activity Form */}
