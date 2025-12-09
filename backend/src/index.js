@@ -2215,15 +2215,44 @@ app.post('/admin/recompute-leaderboard', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'no raw_activities documents found' });
     }
 
-    // 2. Aggregate by athlete_name
+    // 2. Load existing summary_athletes for nickname/goal lookup
+    const summarySnaps = await db.collection('summary_athletes').get();
+    const summaryLookup = new Map();
+    summarySnaps.docs.forEach(doc => {
+      const data = doc.data() || {};
+      const docId = String(doc.id || '');
+      // Extract name from doc id if it's name-based
+      const fromId = docId.startsWith('name:') ? docId.replace(/^name:/, '').trim() : null;
+      const rawName = (data.name || fromId || '').trim();
+      // Clean name (remove leading zeros)
+      const cleanName = rawName.replace(/^0+(?=[A-Za-z])/, '').trim();
+      // Get nickname
+      const nickname = (data.nickname || '').trim().replace(/^0+(?=[A-Za-z])/, '').trim();
+      const goal = Number(data.goal || 0) || 0;
+      
+      // Store by lowercase name for lookup
+      if (cleanName) {
+        summaryLookup.set(cleanName.toLowerCase(), { nickname, goal, name: cleanName, docId });
+      }
+      if (fromId) {
+        const cleanFromId = fromId.replace(/^0+(?=[A-Za-z])/, '').trim();
+        if (cleanFromId && !summaryLookup.has(cleanFromId.toLowerCase())) {
+          summaryLookup.set(cleanFromId.toLowerCase(), { nickname, goal, name: cleanFromId, docId });
+        }
+      }
+    });
+
+    // 3. Aggregate by athlete_name
     const agg = new Map();
     for (const doc of rawSnaps.docs) {
       const d = doc.data();
-      const name = String(d.athlete_name || d.athlete || '').trim();
-      if (!name) continue;
+      const rawName = String(d.athlete_name || d.athlete || '').trim();
+      if (!rawName) continue;
 
-      const key = name.toLowerCase();
-      const cur = agg.get(key) || { athlete_name: name, distance: 0, count: 0, longest: 0, total_moving_time: 0, elev_gain: 0 };
+      // Clean the name (remove leading zeros that might be prefixed)
+      const cleanName = rawName.replace(/^0+(?=[A-Za-z])/, '').trim();
+      const key = cleanName.toLowerCase();
+      const cur = agg.get(key) || { athlete_name: cleanName, distance: 0, count: 0, longest: 0, total_moving_time: 0, elev_gain: 0 };
       
       const dist = Number(d.distance || 0);
       const mt = Number(d.moving_time || d.elapsed_time || 0);
@@ -2235,12 +2264,12 @@ app.post('/admin/recompute-leaderboard', async (req, res) => {
       cur.total_moving_time += mt;
       cur.elev_gain += eg;
       // Keep the most complete athlete_name (prefer the one with more characters/proper casing)
-      if (name.length > cur.athlete_name.length) cur.athlete_name = name;
+      if (cleanName.length > cur.athlete_name.length) cur.athlete_name = cleanName;
       
       agg.set(key, cur);
     }
 
-    // 3. Clear existing activities collection and write new summaries
+    // 4. Clear existing activities collection and write new summaries
     // First, delete all existing activity docs
     const existingActSnaps = await db.collection('activities').get();
     const batch = db.batch();
@@ -2249,9 +2278,15 @@ app.post('/admin/recompute-leaderboard', async (req, res) => {
     }
     await batch.commit();
 
-    // 4. Write new activity summaries
+    // 5. Write new activity summaries
     const results = [];
     for (const [key, v] of agg.entries()) {
+      // Look up nickname and goal from summary_athletes
+      const meta = summaryLookup.get(key) || {};
+      // Use nickname if available, otherwise use the clean athlete name as nickname
+      const nickname = meta.nickname || v.athlete_name;
+      const goal = meta.goal || 0;
+      
       const docId = `name:${v.athlete_name}`;
       const avgPaceSecPerKm = v.distance > 0 ? Math.round((v.total_moving_time / (v.distance / 1000))) : null;
       
@@ -2264,25 +2299,38 @@ app.post('/admin/recompute-leaderboard', async (req, res) => {
         updated_at: Date.now()
       };
       
-      const athleteObj = { name: v.athlete_name };
+      const athleteObj = { 
+        name: v.athlete_name,
+        nickname: nickname,
+        goal: goal
+      };
       
-      await db.collection('activities').doc(docId).set({ athlete: athleteObj, summary }, { merge: false });
+      await db.collection('activities').doc(docId).set({ athlete: athleteObj, summary, nickname, goal }, { merge: false });
       
-      // Also update summary_athletes
+      // Also update summary_athletes (preserve existing nickname/goal, but set nickname if missing)
       try {
-        await db.collection('summary_athletes').doc(docId).set({
+        const updateData = {
           id: docId,
           name: v.athlete_name,
           updated_at: Date.now()
-        }, { merge: true });
+        };
+        // Only set nickname if meta doesn't have one (don't overwrite existing nicknames)
+        if (!meta.nickname) {
+          updateData.nickname = v.athlete_name;
+        }
+        // Always preserve goal
+        if (goal) {
+          updateData.goal = goal;
+        }
+        await db.collection('summary_athletes').doc(docId).set(updateData, { merge: true });
       } catch (e) {
         console.warn('failed writing summary_athletes for', docId, e.message || e);
       }
       
-      results.push({ id: docId, summary });
+      results.push({ id: docId, summary, nickname, goal });
     }
 
-    // 5. Write leaderboard snapshot
+    // 6. Write leaderboard snapshot
     const actSnaps = await db.collection('activities').get();
     const rows = actSnaps.docs.map(d => ({ id: d.id, ...d.data() }));
     const snapshot = {
