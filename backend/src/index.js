@@ -2203,6 +2203,109 @@ app.post('/admin/make-activities-snapshot', async (req, res) => {
   }
 });
 
+// Admin: Recompute leaderboard from raw_activities without full aggregation
+// This endpoint reads raw_activities, computes per-athlete summaries, updates the activities collection,
+// and writes a fresh leaderboard_snapshots/latest document. Useful after deleting activities to reflect changes.
+app.post('/admin/recompute-leaderboard', async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'firestore not initialized' });
+  try {
+    // 1. Read all raw_activities
+    const rawSnaps = await db.collection('raw_activities').get();
+    if (!rawSnaps || rawSnaps.empty) {
+      return res.status(400).json({ ok: false, error: 'no raw_activities documents found' });
+    }
+
+    // 2. Aggregate by athlete_name
+    const agg = new Map();
+    for (const doc of rawSnaps.docs) {
+      const d = doc.data();
+      const name = String(d.athlete_name || d.athlete || '').trim();
+      if (!name) continue;
+
+      const key = name.toLowerCase();
+      const cur = agg.get(key) || { athlete_name: name, distance: 0, count: 0, longest: 0, total_moving_time: 0, elev_gain: 0 };
+      
+      const dist = Number(d.distance || 0);
+      const mt = Number(d.moving_time || d.elapsed_time || 0);
+      const eg = Number(d.total_elevation_gain || d.elevation_gain || d.elev_total || 0);
+      
+      cur.distance += dist;
+      cur.count += 1;
+      cur.longest = Math.max(cur.longest || 0, dist);
+      cur.total_moving_time += mt;
+      cur.elev_gain += eg;
+      // Keep the most complete athlete_name (prefer the one with more characters/proper casing)
+      if (name.length > cur.athlete_name.length) cur.athlete_name = name;
+      
+      agg.set(key, cur);
+    }
+
+    // 3. Clear existing activities collection and write new summaries
+    // First, delete all existing activity docs
+    const existingActSnaps = await db.collection('activities').get();
+    const batch = db.batch();
+    for (const doc of existingActSnaps.docs) {
+      batch.delete(doc.ref);
+    }
+    await batch.commit();
+
+    // 4. Write new activity summaries
+    const results = [];
+    for (const [key, v] of agg.entries()) {
+      const docId = `name:${v.athlete_name}`;
+      const avgPaceSecPerKm = v.distance > 0 ? Math.round((v.total_moving_time / (v.distance / 1000))) : null;
+      
+      const summary = {
+        distance: v.distance,
+        count: v.count,
+        longest: v.longest,
+        avg_pace: avgPaceSecPerKm,
+        elev_gain: v.elev_gain,
+        updated_at: Date.now()
+      };
+      
+      const athleteObj = { name: v.athlete_name };
+      
+      await db.collection('activities').doc(docId).set({ athlete: athleteObj, summary }, { merge: false });
+      
+      // Also update summary_athletes
+      try {
+        await db.collection('summary_athletes').doc(docId).set({
+          id: docId,
+          name: v.athlete_name,
+          updated_at: Date.now()
+        }, { merge: true });
+      } catch (e) {
+        console.warn('failed writing summary_athletes for', docId, e.message || e);
+      }
+      
+      results.push({ id: docId, summary });
+    }
+
+    // 5. Write leaderboard snapshot
+    const actSnaps = await db.collection('activities').get();
+    const rows = actSnaps.docs.map(d => ({ id: d.id, ...d.data() }));
+    const snapshot = {
+      metadata: { recomputed_at: Date.now(), rowsCount: rows.length, rawActivitiesCount: rawSnaps.size },
+      rows
+    };
+    await db.collection('leaderboard_snapshots').doc('latest').set(snapshot, { merge: false });
+    // Archive
+    await db.collection('leaderboard_snapshots').doc(`snap_${Date.now()}`).set(snapshot, { merge: false });
+
+    return res.json({
+      ok: true,
+      message: 'Leaderboard recomputed from raw_activities',
+      athleteCount: results.length,
+      rawActivitiesCount: rawSnaps.size,
+      rowsCount: rows.length
+    });
+  } catch (e) {
+    console.error('recompute-leaderboard failed', e && e.message || e);
+    return res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
 // Admin: Dedupe raw_activities in-place (dry_run supported)
 // groupingKey: athlete_name (case-insensitive) + rounded distance + rounded moving_time/elapsed_time
 app.post('/admin/dedupe-raw-activities', async (req, res) => {

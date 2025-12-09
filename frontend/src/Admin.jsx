@@ -809,6 +809,27 @@ export default function Admin(){
     }
   }
 
+  async function handleRecomputeLeaderboard(){
+    if (!confirm('Recompute leaderboard from raw_activities? This will:\n\n• Recalculate all athlete summaries from raw_activities\n• Update the activities collection\n• Update the leaderboard snapshot\n\nThis is useful after deleting activities to reflect changes immediately.\n\nContinue?')) return
+    try{
+      setAdminBusy(true)
+      setAdminBusyMsg('Recomputing leaderboard…')
+      const res = await fetch(`${API}/admin/recompute-leaderboard`, { method: 'POST' })
+      if (!res.ok) throw new Error('Recompute failed')
+      const j = await res.json()
+      alert(`Leaderboard recomputed!\n\n• Athletes: ${j.athleteCount || 0}\n• Raw activities processed: ${j.rawActivitiesCount || 0}`)
+      // Refresh both lists
+      await load()
+      await loadActivities(true)
+    }catch(e){
+      console.error('Recompute leaderboard failed', e)
+      alert('Recompute failed: ' + (e && e.message ? e.message : e))
+    }finally{
+      setAdminBusy(false)
+      setAdminBusyMsg('')
+    }
+  }
+
 
   return (
     <div className="admin-page admin-card">
@@ -905,27 +926,96 @@ export default function Admin(){
             <main style={{marginTop:20}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
                 <h3 style={{margin:0}}>Activity Records ({activities.length})</h3>
-                <div style={{display:'flex',gap:8}}>
-                  <button className="btn" onClick={() => setShowAddActivity(!showAddActivity)}>
-                    {showAddActivity ? 'Cancel' : '+ Add Activity'}
-                  </button>
-                  <button className="btn btn-ghost" onClick={handleBulkImport}>Import CSV</button>
-                  <button className="btn btn-ghost" onClick={handleRestoreBackup}>Restore Backup</button>
-                  <button className="btn btn-ghost" onClick={runAggregation}>Run Aggregation</button>
-                  <button className="btn btn-ghost" onClick={() => handlePreviewCleanup()}>Preview Cleanup</button>
-                  <button className="btn btn-ghost" onClick={() => handleExportRawActivities()}>Export Raw Activities</button>
-                  <button className="btn btn-ghost" onClick={() => handleExportPrunedNormalized()}>Export Pruned/Normalized</button>
-                  <label style={{display:'inline-flex',alignItems:'center',gap:8}}>
-                    <input id="uploadRawFile" type="file" accept="application/json" style={{display:'none'}} onChange={e => handleUploadFile(e)} />
-                    <button type="button" className="btn btn-ghost" onClick={() => document.getElementById('uploadRawFile').click()}>Choose JSON</button>
-                    <span style={{fontSize:12,color:'#64748b'}}>{uploadFileName || 'No file selected'}</span>
-                  </label>
-                  <button className="btn btn-ghost" onClick={() => handlePreviewReplace()} disabled={!uploadPayload}>Preview Replace</button>
-                  <button className="btn btn-ghost" onClick={() => handleReplaceConfirm()} disabled={!uploadPayload}>Replace Raw Activities</button>
-                  <button className="btn btn-ghost" onClick={() => handlePreviewNormalize()}>Preview Normalize</button>
-                  <button className="btn btn-ghost" onClick={() => handleMakeActivitiesSnapshot()}>Make Activities Snapshot</button>
-                  <button className="btn btn-ghost" onClick={() => handleNormalize()}>Normalize Raw Activities</button>
-                  <button className="btn btn-ghost" onClick={handleCleanup}>Cleanup Duplicates</button>
+                <button className="btn btn-primary" onClick={() => setShowAddActivity(!showAddActivity)}>
+                  {showAddActivity ? '✕ Cancel' : '+ Add Activity'}
+                </button>
+              </div>
+
+              {/* Action Buttons - Organized into groups */}
+              <div className="admin-actions-panel">
+                {/* Primary Actions */}
+                <div className="action-group">
+                  <span className="action-group-label">Leaderboard</span>
+                  <div className="action-group-buttons">
+                    <button className="btn btn-action btn-action-primary" onClick={handleRecomputeLeaderboard} title="Recompute leaderboard from raw_activities - reflects deletions immediately">
+                      <span className="btn-icon">🔄</span>
+                      Recompute Leaderboard
+                    </button>
+                    <button className="btn btn-action" onClick={runAggregation} title="Run full aggregation from Strava">
+                      <span className="btn-icon">⚡</span>
+                      Run Aggregation
+                    </button>
+                    <button className="btn btn-action" onClick={() => handleMakeActivitiesSnapshot()} title="Create leaderboard snapshot from activities collection">
+                      <span className="btn-icon">📸</span>
+                      Make Snapshot
+                    </button>
+                  </div>
+                </div>
+
+                {/* Data Management */}
+                <div className="action-group">
+                  <span className="action-group-label">Data Management</span>
+                  <div className="action-group-buttons">
+                    <button className="btn btn-action" onClick={handleBulkImport} title="Import activities from CSV">
+                      <span className="btn-icon">📥</span>
+                      Import CSV
+                    </button>
+                    <button className="btn btn-action" onClick={() => handleExportRawActivities()} title="Export all raw activities to JSON">
+                      <span className="btn-icon">📤</span>
+                      Export Raw
+                    </button>
+                    <button className="btn btn-action" onClick={() => handleExportPrunedNormalized()} title="Export pruned and normalized data">
+                      <span className="btn-icon">📄</span>
+                      Export Pruned
+                    </button>
+                    <button className="btn btn-action" onClick={handleRestoreBackup} title="Restore from backup">
+                      <span className="btn-icon">♻️</span>
+                      Restore Backup
+                    </button>
+                  </div>
+                </div>
+
+                {/* Cleanup & Normalization */}
+                <div className="action-group">
+                  <span className="action-group-label">Cleanup</span>
+                  <div className="action-group-buttons">
+                    <button className="btn btn-action" onClick={() => handlePreviewCleanup()} title="Preview which duplicates would be removed">
+                      <span className="btn-icon">👁️</span>
+                      Preview Cleanup
+                    </button>
+                    <button className="btn btn-action" onClick={handleCleanup} title="Remove duplicate activities">
+                      <span className="btn-icon">🧹</span>
+                      Cleanup Duplicates
+                    </button>
+                    <button className="btn btn-action" onClick={() => handlePreviewNormalize()} title="Preview normalization changes">
+                      <span className="btn-icon">🔍</span>
+                      Preview Normalize
+                    </button>
+                    <button className="btn btn-action" onClick={() => handleNormalize()} title="Normalize raw activities data">
+                      <span className="btn-icon">✨</span>
+                      Normalize
+                    </button>
+                  </div>
+                </div>
+
+                {/* Upload & Replace */}
+                <div className="action-group">
+                  <span className="action-group-label">Upload & Replace</span>
+                  <div className="action-group-buttons">
+                    <label className="btn btn-action btn-file">
+                      <span className="btn-icon">📁</span>
+                      {uploadFileName ? uploadFileName.slice(0, 15) + '...' : 'Choose JSON'}
+                      <input id="uploadRawFile" type="file" accept="application/json" style={{display:'none'}} onChange={e => handleUploadFile(e)} />
+                    </label>
+                    <button className="btn btn-action" onClick={() => handlePreviewReplace()} disabled={!uploadPayload} title="Preview what will change">
+                      <span className="btn-icon">👁️</span>
+                      Preview
+                    </button>
+                    <button className="btn btn-action btn-danger" onClick={() => handleReplaceConfirm()} disabled={!uploadPayload} title="Replace all raw activities with uploaded file">
+                      <span className="btn-icon">⚠️</span>
+                      Replace All
+                    </button>
+                  </div>
                 </div>
               </div>
 
